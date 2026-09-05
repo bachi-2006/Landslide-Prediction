@@ -16,9 +16,7 @@
     "@supabase/supabase-js": "^2.39.0",
     "firebase": "^10.7.0",
     "axios": "^1.6.2",
-    "lucide-react": "^0.292.0",
-    "clsx": "^2.0.0",
-    "tailwind-merge": "^2.0.0"
+    "lucide-react": "^0.292.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.37",

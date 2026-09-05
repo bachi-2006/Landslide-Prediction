@@ -1,23 +1,37 @@
 import { initializeApp } from "firebase/app";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
+import { deviceService } from './api';
 
 const firebaseConfig = {
-  apiKey: "your-api-key",
-  authDomain: "your-project.firebaseapp.com",
-  projectId: "your-project-id",
-  storageBucket: "your-project.appspot.com",
-  messagingSenderId: "your-sender-id",
-  appId: "your-app-id"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const app = initializeApp(firebaseConfig);
-const messaging = getMessaging(app);
+const isConfigured = Boolean(
+  firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId
+);
+
+let messaging = null;
+if (isConfigured) {
+  const app = initializeApp(firebaseConfig);
+  messaging = getMessaging(app);
+} else {
+  console.warn("Firebase not configured (VITE_FIREBASE_* env vars missing). Notifications disabled.");
+}
 
 export const requestNotificationPermission = async () => {
+  if (!messaging) return null;
+  if (typeof Notification === 'undefined') return null;
   try {
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      const token = await getToken(messaging, { vapidKey: 'your-public-vapid-key' });
+      const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY;
+      const token = await getToken(messaging, { vapidKey });
+      if (token) await deviceService.registerToken(token);
       return token;
     }
   } catch (error) {
@@ -27,6 +41,7 @@ export const requestNotificationPermission = async () => {
 };
 
 export const onNotificationReceived = (callback) => {
+  if (!messaging) return;
   onMessage(messaging, (payload) => {
     callback(payload);
   });

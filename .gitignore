@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Env files
+.env
+.env.local
+.env.*.local
+firebase-service-account*.json
+
+# Downloaded source files and intermediate conversion artifacts
+data/raw/
+data/boundaries/india_adm1_simplified.geojson
+data/boundaries/india_adm2_simplified.geojson
+
+# Node / Frontend
+node_modules/
+dist/
+frontend/dist/
+
+# ML artifacts
+backend/ml/*.joblib
+
+# OS / Editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

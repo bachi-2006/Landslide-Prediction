@@ -4,11 +4,15 @@ FastAPI application integrating all risk, incident, routing, and alert services.
 """
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import os
+from dotenv import load_dotenv
 
-from backend.routers import risk, incidents, routes, alerts
+from backend.routers import risk, incidents, routes, alerts, devices
+
+load_dotenv()
 
 app = FastAPI(
     title="NE-SHIELD API",
@@ -16,12 +20,15 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Security: CORS configuration
-# In production, restrict 'allow_origins' to the specific frontend domain
+# CORS: restrict origins via environment in production.
+# Comma-separated list, e.g. CORS_ORIGINS=http://localhost:5173,https://app.example.com
+cors_origins = os.getenv("CORS_ORIGINS", "*")
+origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=origins,
+    allow_credentials=origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -31,27 +38,18 @@ app.include_router(risk.router)
 app.include_router(incidents.router)
 app.include_router(routes.router)
 app.include_router(alerts.router)
+app.include_router(devices.router)
 
 @app.get("/")
 async def root():
     return {"message": "Welcome to NE-SHIELD API. Visit /docs for API documentation."}
 
-# WebSocket for Realtime updates
-# This connects the frontend to the backend, which in turn listens to Supabase Realtime
-@app.websocket("/ws/risk-updates")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    try:
-        # In a real implementation, we would subscribe to Supabase Realtime here
-        # and forward events to the connected websocket client.
-        # For the MVP demo, we'll handle the subscription on the frontend side
-        # directly via the Supabase JS client, but keep this endpoint for architectural completeness.
-        while True:
-            data = await websocket.receive_text()
-            await websocket.send_text(f"Heartbeat: Received {data}")
-    except WebSocketDisconnect:
-        print("Client disconnected from risk-updates websocket")
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 
 if __name__ == "__main__":
-    # Run with uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # Run with uvicorn: python backend/main.py (from repo root)
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
