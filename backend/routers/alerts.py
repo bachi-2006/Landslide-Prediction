@@ -51,7 +51,7 @@ async def broadcast_alert(req: BroadcastAlertRequest):
         # 2. SMS Broadcast
         if "sms" in req.channels:
             env_numbers = [n.strip() for n in os.getenv("EMERGENCY_SMS_RECIPIENTS", "").split(",") if n.strip()]
-            recipients = req.phone_numbers or env_numbers or ["+91-1078-NDRF-HQ", "+91-1070-STATE-SDMA", "+91-1077-DISTRICT-DEOC"]
+            recipients = req.phone_numbers or env_numbers or ["+917416717797", "+916305985313"]
             sms_res = await send_sms_alert(recipients, f"NE-SHIELD {req.level} ALERT: {req.message}")
             results["sms"] = sms_res
 
