@@ -5,20 +5,49 @@ This module initializes the Supabase client for the NE-SHIELD backend.
 
 import os
 from dotenv import load_dotenv
-from supabase import create_client, Client
 
 # Load environment variables from .env file
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_PUBLISHABLE_KEY")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_SECRET_KEY")
 
-if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-    raise EnvironmentError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in the .env file")
+# Treat placeholder/default values as "not configured"
+def _is_placeholder(value: str) -> bool:
+    return not value or "your_" in value.lower()
 
-# Initialize Supabase client with Service Role Key for administrative access on the backend
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+def is_supabase_configured() -> bool:
+    return bool(
+        SUPABASE_URL
+        and SUPABASE_SERVICE_ROLE_KEY
+        and not _is_placeholder(SUPABASE_URL)
+        and not _is_placeholder(SUPABASE_SERVICE_ROLE_KEY)
+    )
+
+supabase = None
+
+class SupabaseNotConfiguredError(RuntimeError):
+    """Raised when an endpoint needs Supabase but credentials are unavailable."""
+
+
+def get_supabase():
+    if supabase is None:
+        raise SupabaseNotConfiguredError(
+            "Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY."
+        )
+    return supabase
+
+if is_supabase_configured():
+    try:
+        from supabase import create_client, Client
+        # Initialize Supabase client with Service Role Key for administrative access on the backend
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    except Exception as e:
+        print(f"WARNING: Supabase unavailable, running without DB: {e}")
+        supabase = None
+else:
+    print("WARNING: Supabase not configured, running without DB. Map data will not load.")
 
 """
 --- SQL SCHEMA ---

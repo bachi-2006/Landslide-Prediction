@@ -1,86 +1,182 @@
-import React from 'react';
-import { AlertTriangle, TrendingUp, MapPin, Navigation } from 'lucide-react';
+import React, { useState } from 'react';
+import { AlertTriangle, RefreshCw, TrendingUp, Navigation, CloudRain, Droplets, Mountain, Compass, ShieldCheck, PhoneCall } from 'lucide-react';
 import { riskService, routeService } from '../services/api';
+import { getTranslation } from '../services/i18n';
 
-const DistrictPanel = ({ district, onClose }) => {
+const DistrictPanel = ({ district, onClose, onRouteGenerated, onRiskUpdated, lang = 'en' }) => {
     if (!district) return null;
+
+    const t = (key) => getTranslation(lang, key);
+
+    // Compute a simple centroid from a GeoJSON polygon/multipolygon
+    const deriveCentroid = (feature) => {
+        const geom = feature?.geometry;
+        let coords = [];
+        if (geom?.type === 'Polygon') coords = geom.coordinates[0];
+        if (geom?.type === 'MultiPolygon') coords = geom.coordinates[0]?.[0] || [];
+        if (!coords.length) return { lat: 26.0, lon: 92.0 }; // fallback NER center
+        let lat = 0, lon = 0;
+        coords.forEach(([lng, latv]) => { lon += lng; lat += latv; });
+        return { lat: lat / coords.length, lon: lon / coords.length };
+    };
+
+    const props = district.properties || district;
+    const name = props.name || props.district_name || 'Unknown district';
+    const centroid = deriveCentroid(district);
 
     const [data, setData] = React.useState(null);
     const [loading, setLoading] = useState(false);
+    const [refreshing, setRefreshing] = useState(false);
+    const [error, setError] = useState(null);
 
     React.useEffect(() => {
-        if (district.id) {
-            riskService.getDistrictRisk(district.id)
-                .then(res => setData(res.data.data))
-                .catch(err => console.error(err));
+        let active = true;
+        setData(null);
+        setError(null);
+        if (props.id) {
+            riskService.getDistrictRisk(props.id)
+                .then(res => { if (active) setData(res.data.data); })
+                .catch(() => { if (active) setError('Risk data is unavailable for this district.'); });
         }
+        return () => { active = false; };
     }, [district]);
+
+    const handleRefreshRisk = async () => {
+        if (!props.id) return;
+        setRefreshing(true);
+        setError(null);
+        try {
+            const response = await riskService.refreshRisk(props.id, centroid.lat, centroid.lon, name);
+            setData(response.data.data);
+            onRiskUpdated?.();
+        } catch (refreshError) {
+            setError('Risk refresh failed. Verify external weather/elevation services.');
+        } finally {
+            setRefreshing(false);
+        }
+    };
 
     const handleGetRoute = async () => {
         setLoading(true);
         try {
-            // In a real app, we'd get current GPS origin. Here we mock.
             const payload = {
-                origin_lat: 26.1, origin_lon: 91.7,
-                dest_lat: district.lat, dest_lon: district.lon,
-                avoid_district_id: district.id
+                origin_lat: 26.1, origin_lon: 91.7, // Guwahati Hub
+                dest_lat: centroid.lat, dest_lon: centroid.lon,
+                avoid_district_id: props.id,
+                avoid_lat: centroid.lat,
+                avoid_lon: centroid.lon
             };
             const res = await routeService.getSafeRoute(payload);
-            alert("Safe route generated! Check map overlay.");
+            onRouteGenerated?.(res.data.data);
         } catch (e) {
-            alert("Routing failed");
+            setError('Routing failed. Verify ORS service.');
         } finally {
             setLoading(false);
         }
     };
 
     const riskColors = {
-        'Low': 'bg-green-100 text-green-800',
-        'Moderate': 'bg-yellow-100 text-yellow-800',
-        'High': 'bg-orange-100 text-orange-800',
-        'Critical': 'bg-red-100 text-red-800',
+        'Low': 'bg-green-100 text-green-800 border-green-200',
+        'Moderate': 'bg-yellow-100 text-yellow-800 border-yellow-200',
+        'High': 'bg-orange-100 text-orange-800 border-orange-200',
+        'Critical': 'bg-red-100 text-red-800 border-red-200',
     };
 
-    if (!data) return <div className="p-6">Loading district risk data...</div>;
+    if (!data) return <div className="w-96 h-full bg-white p-6 text-sm text-slate-600">{error || 'Loading district risk data...'}</div>;
+
+    const factors = Object.entries(data.factors_json || {}).filter(([k]) => !k.startsWith('_'));
+    const telemetry = data.factors_json?._telemetry || null;
+
+    const roadStatus = data.risk_level === 'Critical'
+        ? { text: t('road_blocked'), color: 'bg-red-50 text-red-700 border-red-200' }
+        : data.risk_level === 'High'
+        ? { text: t('road_at_risk'), color: 'bg-orange-50 text-orange-700 border-orange-200' }
+        : { text: t('road_clear'), color: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
 
     return (
-        <div className="w-96 h-full bg-white shadow-xl overflow-y-auto p-6 flex flex-col gap-6 border-l border-slate-200">
+        <div className="w-96 h-full bg-white shadow-xl overflow-y-auto p-6 flex flex-col gap-5 border-l border-slate-200 text-slate-800">
             <div className="flex justify-between items-center">
-                <h2 className="text-2xl font-bold text-slate-800">{district.name}</h2>
-                <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
+                <div>
+                    <h2 className="text-2xl font-bold text-slate-800">{name}</h2>
+                    <span className="text-xs text-slate-400">NER District ID: {props.id}</span>
+                </div>
+                <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1" aria-label="Close district panel">✕</button>
             </div>
 
-            <div className={`p-4 rounded-lg flex items-center gap-3 ${riskColors[data.risk_level] || 'bg-slate-100'}`}>
+            {error && <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+
+            {/* Risk Badge */}
+            <div className={`p-4 rounded-xl flex items-center gap-3 border ${riskColors[data.risk_level] || 'bg-slate-100 border-slate-200'}`}>
                 <AlertTriangle size={24} />
                 <div>
-                    <p className="text-xs uppercase font-semibold">Current Risk Level</p>
-                    <p className="text-xl font-bold">{data.risk_level}</p>
+                    <p className="text-xs uppercase font-semibold opacity-75">{t('current_risk_level')}</p>
+                    <p className="text-xl font-black">{data.risk_level}</p>
                 </div>
             </div>
 
+            {/* Road Status */}
+            <div className={`p-3 rounded-xl border text-xs font-semibold flex items-center gap-2 ${roadStatus.color}`}>
+                <ShieldCheck size={18} />
+                <div>
+                    <span className="block opacity-75 font-normal">{t('road_status')}</span>
+                    <span>{roadStatus.text}</span>
+                </div>
+            </div>
+
+            {/* Risk Score bar */}
             <div>
                 <div className="flex justify-between mb-2">
-                    <span className="text-sm font-medium text-slate-600">Risk Score</span>
-                    <span className="text-sm font-bold text-slate-800">{Math.round(data.risk_score * 100)}%</span>
+                    <span className="text-sm font-medium text-slate-600">{t('risk_score')}</span>
+                    <span className="text-sm font-bold text-slate-900">{Math.round(data.risk_score * 100)}%</span>
                 </div>
-                <div className="w-full bg-slate-200 h-3 rounded-full overflow-hidden">
+                <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
                     <div
-                        className="h-full bg-blue-600 transition-all duration-500"
-                        style={{ width: `${data.risk_score * 100}%` }}
+                        className={`h-full transition-all duration-500 ${
+                            data.risk_score > 0.8 ? 'bg-red-600' : data.risk_score > 0.5 ? 'bg-orange-500' : 'bg-blue-600'
+                        }`}
+                        style={{ width: `${Math.min(data.risk_score * 100, 100)}%` }}
                     />
                 </div>
             </div>
 
+            {/* Live Weather & Telemetry Card */}
+            {telemetry && (
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                    <h3 className="text-xs font-bold text-slate-700 uppercase mb-2 flex items-center gap-1.5">
+                        <CloudRain size={14} className="text-blue-600" /> {t('weather_telemetry')}
+                    </h3>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="bg-white p-2 rounded border border-slate-100">
+                            <span className="text-slate-400 block">{t('rain_24h')}</span>
+                            <span className="font-bold text-slate-800">{telemetry.rain_24h_mm} mm</span>
+                        </div>
+                        <div className="bg-white p-2 rounded border border-slate-100">
+                            <span className="text-slate-400 block">{t('soil_moisture')}</span>
+                            <span className="font-bold text-slate-800">{telemetry.soil_moisture} m³/m³</span>
+                        </div>
+                        <div className="bg-white p-2 rounded border border-slate-100">
+                            <span className="text-slate-400 block">{t('elevation')}</span>
+                            <span className="font-bold text-slate-800">{telemetry.elevation_m} m</span>
+                        </div>
+                        <div className="bg-white p-2 rounded border border-slate-100">
+                            <span className="text-slate-400 block">{t('slope_angle')}</span>
+                            <span className="font-bold text-slate-800">{telemetry.slope_deg}°</span>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Contributing Factors */}
             <div>
-                <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
-                    <TrendingUp size={16} /> Contributing Factors
+                <h3 className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-2">
+                    <TrendingUp size={16} /> {t('contributing_factors')}
                 </h3>
-                <div className="flex flex-col gap-3">
-                    {Object.entries(data.factors_json).map(([factor, value]) => (
+                <div className="flex flex-col gap-2.5">
+                    {factors.map(([factor, value]) => (
                         <div key={factor} className="flex flex-col gap-1">
                             <div className="flex justify-between text-xs text-slate-500 capitalize">
                                 <span>{factor.replace('_', ' ')}</span>
-                                <span>{Math.round(value)}%</span>
+                                <span className="font-medium">{Math.round(value)}%</span>
                             </div>
                             <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
                                 <div
@@ -93,20 +189,36 @@ const DistrictPanel = ({ district, onClose }) => {
                 </div>
             </div>
 
-            <div className="mt-auto pt-6 border-t border-slate-100">
+            {/* Emergency Hotline */}
+            <div className="p-3 bg-blue-50/70 border border-blue-200/60 rounded-xl text-xs space-y-1">
+                <span className="font-bold text-blue-900 flex items-center gap-1.5">
+                    <PhoneCall size={14} className="text-blue-600" /> {t('emergency_contacts')}
+                </span>
+                <p className="text-blue-800">{t('ndrf_helpline')}</p>
+                <p className="text-blue-800">{t('state_sdma')}</p>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="mt-auto pt-4 border-t border-slate-100 space-y-2">
+                <button
+                    onClick={handleRefreshRisk}
+                    disabled={refreshing}
+                    className="w-full py-2.5 border border-slate-300 text-slate-700 rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-slate-50 disabled:opacity-60 text-sm transition-all"
+                >
+                    <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+                    {refreshing ? t('refreshing') : t('refresh_risk')}
+                </button>
                 <button
                     onClick={handleGetRoute}
                     disabled={loading}
-                    className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors disabled:bg-blue-300"
+                    className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors disabled:bg-blue-300 text-sm shadow-md"
                 >
                     <Navigation size={18} />
-                    {loading ? "Calculating..." : "Show Safe Route"}
+                    {loading ? t('calculating') : t('show_safe_route')}
                 </button>
             </div>
         </div>
     );
 };
-
-import { useState } from 'react'; // Fix missing import
 
 export default DistrictPanel;
