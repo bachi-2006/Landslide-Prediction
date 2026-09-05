@@ -18,6 +18,7 @@ const AlertsEngine = ({ geoJsonData, onClose, lang = 'en' }) => {
     const [alertLevel, setAlertLevel] = useState('Critical');
     const [alertLang, setAlertLang] = useState('en');
     const [selectedChannels, setSelectedChannels] = useState(['push', 'sms']);
+    const [customPhones, setCustomPhones] = useState('+91 1078 (NDRF), +91 1070 (SDMA), +91 1077 (DEOC)');
     const [isDispatching, setIsDispatching] = useState(false);
     const [dispatchResult, setDispatchResult] = useState(null);
 
@@ -91,11 +92,13 @@ const AlertsEngine = ({ geoJsonData, onClose, lang = 'en' }) => {
 
         try {
             const apiBase = import.meta.env.VITE_API_URL || '/api';
+            const phoneList = customPhones.split(',').map(p => p.trim()).filter(Boolean);
             const response = await axios.post(`${apiBase}/alert/broadcast`, {
                 district_id: districtObj.id,
                 level: alertLevel,
                 message: `[${districtObj.name.toUpperCase()}] ${customMessage}`,
-                channels: selectedChannels
+                channels: selectedChannels,
+                phone_numbers: phoneList
             });
 
             setDispatchResult({
@@ -263,6 +266,23 @@ const AlertsEngine = ({ geoJsonData, onClose, lang = 'en' }) => {
                                 </button>
                             </div>
                         </div>
+
+                        {/* SMS Recipient Directory */}
+                        {selectedChannels.includes('sms') && (
+                            <div>
+                                <label className="text-xs font-bold text-slate-300 uppercase tracking-wider block mb-1.5 flex items-center justify-between">
+                                    <span>Emergency SMS Recipients</span>
+                                    <span className="text-[10px] text-slate-400 font-normal">Comma-separated numbers or contacts</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={customPhones}
+                                    onChange={(e) => setCustomPhones(e.target.value)}
+                                    placeholder="+91 98765 43210, +91 1078"
+                                    className="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-emerald-400 font-mono outline-none focus:border-emerald-500"
+                                />
+                            </div>
+                        )}
 
                         {/* Message Preview & Edit */}
                         <div>

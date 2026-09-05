@@ -3,6 +3,7 @@ Alerts API Router
 Handles triggering and recording system alerts.
 """
 
+import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
@@ -49,7 +50,8 @@ async def broadcast_alert(req: BroadcastAlertRequest):
 
         # 2. SMS Broadcast
         if "sms" in req.channels:
-            recipients = req.phone_numbers or ["+91-1078-NDRF", "+91-1070-SDMA"]
+            env_numbers = [n.strip() for n in os.getenv("EMERGENCY_SMS_RECIPIENTS", "").split(",") if n.strip()]
+            recipients = req.phone_numbers or env_numbers or ["+91-1078-NDRF-HQ", "+91-1070-STATE-SDMA", "+91-1077-DISTRICT-DEOC"]
             sms_res = await send_sms_alert(recipients, f"NE-SHIELD {req.level} ALERT: {req.message}")
             results["sms"] = sms_res
 
