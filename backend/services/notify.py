@@ -52,14 +52,62 @@ async def send_push_notification(tokens: List[str], title: str, body: str) -> bo
 
 async def send_sms_alert(phone_numbers: List[str], message: str) -> dict:
     """
-    Sends early warning SMS alerts to field officials and community contacts.
+    Sends early warning SMS alerts via Fast2SMS API to field officials and community contacts.
     Falls back to automated simulation log if SMS gateway credentials are not configured.
     """
-    sms_key = os.getenv("SMS_GATEWAY_API_KEY")
+    import httpx
+    import re
+
+    sms_key = os.getenv("FAST2SMS_API_KEY") or os.getenv("SMS_GATEWAY_API_KEY")
     logger.info(f"[SMS DISPATCH] Alert queued for {len(phone_numbers)} recipients: {message}")
+
+    # Extract 10-digit Indian phone numbers
+    clean_numbers = []
+    for num in phone_numbers:
+        digits = re.sub(r"\D", "", num)
+        if len(digits) >= 10:
+            clean_numbers.append(digits[-10:])
+
+    if sms_key and clean_numbers:
+        try:
+            url = "https://www.fast2sms.com/dev/bulkV2"
+            payload = {
+                "route": "v3",
+                "sender_id": "TXTIND",
+                "message": message[:160], # 160 char limit for single SMS
+                "language": "english",
+                "flash": 0,
+                "numbers": ",".join(clean_numbers)
+            }
+            headers = {
+                "authorization": sms_key,
+                "Content-Type": "application/json"
+            }
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(url, json=payload, headers=headers)
+                res_data = response.json()
+                logger.info(f"[FAST2SMS RESPONSE] {res_data}")
+
+                return {
+                    "channel": "sms",
+                    "recipients_count": len(clean_numbers),
+                    "status": "delivered_fast2sms" if res_data.get("return") else "failed_fast2sms",
+                    "gateway": "Fast2SMS Bulk V3",
+                    "api_response": res_data
+                }
+        except Exception as e:
+            logger.error(f"[FAST2SMS ERROR] Failed to send SMS: {e}")
+            return {
+                "channel": "sms",
+                "recipients_count": len(clean_numbers),
+                "status": f"error: {str(e)}",
+                "gateway": "Fast2SMS Bulk V3"
+            }
+
     return {
         "channel": "sms",
         "recipients_count": len(phone_numbers),
-        "status": "delivered" if sms_key else "simulated_success",
-        "gateway": "CDAC/Gov-SMS" if sms_key else "Simulated-Telecom-Gateway"
+        "status": "delivered_simulated" if not sms_key else "no_valid_numbers",
+        "gateway": "Simulated-Telecom-Gateway"
     }
