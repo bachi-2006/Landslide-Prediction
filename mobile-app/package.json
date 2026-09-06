@@ -15,9 +15,11 @@
     "@capacitor/core": "^8.5.1",
     "@capacitor/geolocation": "^8.2.2",
     "@vitejs/plugin-react": "^4.2.0",
+    "leaflet": "^1.9.4",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-leaflet": "^4.2.1",
     "vite": "^5.4.10"
   }
 }

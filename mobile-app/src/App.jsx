@@ -24,9 +24,24 @@ import {
   WifiOff,
   X,
   Camera as CameraIcon,
+  RefreshCw,
+  Volume2,
+  VolumeX,
+  CheckCircle2,
+  Share2
 } from 'lucide-react';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Geolocation } from '@capacitor/geolocation';
+
+import { mobileApi } from './services/api';
+import { soundEngine } from './services/soundEngine';
+import { notificationService } from './services/notifications';
+
+import MobileMapView from './components/MobileMapView';
+import DistrictDetailSheet from './components/DistrictDetailSheet';
+import NotificationCenterModal from './components/NotificationCenterModal';
+import ProfileModal from './components/ProfileModal';
+import EmergencyAlertBanner from './components/EmergencyAlertBanner';
 
 const defaultDistricts = [
   { id: 'IN-ML-01', name: 'East Khasi Hills', state: 'Meghalaya', risk: 'High', score: 78, color: 'high' },
@@ -35,8 +50,8 @@ const defaultDistricts = [
 ];
 
 const defaultAlerts = [
-  { type: 'High risk', title: 'Heavy rain expected', text: 'East Khasi Hills · next 6 hours', time: '12 min ago', color: 'red' },
-  { type: 'Road update', title: 'NH-6 partially blocked', text: 'Near Mawryngkneng · use alternate route', time: '38 min ago', color: 'amber' },
+  { id: '1', type: 'High risk', title: 'Heavy rain expected', text: 'East Khasi Hills · next 6 hours', time: 'Live', color: 'red' },
+  { id: '2', type: 'Road update', title: 'NH-6 partially blocked', text: 'Near Mawryngkneng · use alternate route', time: 'Live', color: 'amber' },
 ];
 
 function App() {
@@ -44,10 +59,23 @@ function App() {
   const [showReport, setShowReport] = useState(false);
   const [reported, setReported] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  
+  // Modals
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [inspectingDistrict, setInspectingDistrict] = useState(null);
+  const [activeEmergencyAlert, setActiveEmergencyAlert] = useState(null);
+
+  // Live Database States
   const [districts, setDistricts] = useState(defaultDistricts);
   const [alerts, setAlerts] = useState(defaultAlerts);
+  const [rawIncidents, setRawIncidents] = useState([]);
   const [selectedDistrict, setSelectedDistrict] = useState(defaultDistricts[0]);
+  const [roadCorridors, setRoadCorridors] = useState([]);
+  const [refreshingHome, setRefreshingHome] = useState(false);
+  const [userLocationName, setUserLocationName] = useState('Shillong, Meghalaya');
 
+  // Network listeners
   useEffect(() => {
     const goOnline = () => setIsOnline(true);
     const goOffline = () => setIsOnline(false);
@@ -59,58 +87,85 @@ function App() {
     };
   }, []);
 
-  const [rawIncidents, setRawIncidents] = useState([]);
-
-  // Plumb live backend API data
+  // Subscribe to emergency broadcasts & push notifications
   useEffect(() => {
-    const fetchLiveData = async () => {
-      try {
-        const base = window.location.origin.includes(':5173') ? '' : 'http://10.82.15.222:8000';
+    const unsub = notificationService.subscribe((alertItem) => {
+      setActiveEmergencyAlert(alertItem);
+    });
+    return unsub;
+  }, []);
 
-        // 1. Fetch live district risks
-        const riskRes = await fetch(`${base}/api/risk`);
-        if (riskRes.ok) {
-          const json = await riskRes.json();
-          if (json.data && json.data.length > 0) {
-            const mapped = json.data.map(d => ({
-              id: d.district_id,
-              name: d.district_name || d.district_id,
-              state: d.district_name?.includes('Khasi') || d.district_name?.includes('Shillong') ? 'Meghalaya' : 'NER',
-              risk: d.risk_level || 'Moderate',
-              score: Math.round((d.risk_score || 0.5) * 100),
-              color: (d.risk_level || 'moderate').toLowerCase()
-            }));
-            setDistricts(mapped);
-          }
-        }
-
-        // 2. Fetch live incidents
-        const incRes = await fetch(`${base}/api/incidents`);
-        if (incRes.ok) {
-          const json = await incRes.json();
-          if (json.data && json.data.length > 0) {
-            setRawIncidents(json.data);
-            const mappedIncidents = json.data.map(inc => ({
-              type: 'Citizen Report',
-              title: inc.description.slice(0, 30),
-              text: `${inc.description} · ${inc.submitted_by}`,
-              time: 'Live',
-              color: 'red',
-              latitude: inc.latitude,
-              longitude: inc.longitude
-            }));
-            setAlerts(mappedIncidents);
-          }
-        }
-      } catch (err) {
-        console.warn("Operating with local cached data:", err);
+  // Fetch live backend data from database
+  const fetchLiveData = async () => {
+    try {
+      // 1. Live district risks
+      const riskRes = await mobileApi.getRisks();
+      if (riskRes.data && riskRes.data.length > 0) {
+        const mapped = riskRes.data.map(d => ({
+          id: d.district_id,
+          name: d.district_name || d.district_id,
+          state: d.district_name?.includes('Khasi') || d.district_name?.includes('Shillong') ? 'Meghalaya' : 'NER',
+          risk: d.risk_level || 'Moderate',
+          score: Math.round((d.risk_score || 0.5) * 100),
+          color: (d.risk_level || 'moderate').toLowerCase()
+        }));
+        setDistricts(mapped);
+        if (!selectedDistrict) setSelectedDistrict(mapped[0]);
       }
-    };
 
+      // 2. Live crowd-sourced field incidents
+      const incRes = await mobileApi.getIncidents();
+      if (incRes.data && incRes.data.length > 0) {
+        setRawIncidents(incRes.data);
+        const mappedIncidents = incRes.data.map((inc, i) => ({
+          id: inc.id || String(i),
+          type: 'Citizen Hazard',
+          title: inc.description.slice(0, 32),
+          text: `${inc.description} · ${inc.submitted_by || 'Field Reporter'}`,
+          time: inc.created_at ? new Date(inc.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live',
+          color: 'red',
+          latitude: inc.latitude,
+          longitude: inc.longitude
+        }));
+        setAlerts(mappedIncidents);
+      }
+
+      // 3. Live road status corridors
+      const roadRes = await mobileApi.getRoadStatus();
+      if (roadRes.data) {
+        setRoadCorridors(roadRes.data);
+      }
+    } catch (err) {
+      console.warn("Operating with cached local data:", err);
+    }
+  };
+
+  useEffect(() => {
     fetchLiveData();
     const interval = setInterval(fetchLiveData, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleManualRefresh = async () => {
+    setRefreshingHome(true);
+    soundEngine.playChime();
+    await fetchLiveData();
+    setTimeout(() => setRefreshingHome(false), 800);
+  };
+
+  const handleAcquireLocationChip = () => {
+    soundEngine.playChime();
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setUserLocationName(`${pos.coords.latitude.toFixed(2)}°N, ${pos.coords.longitude.toFixed(2)}°E (Live GPS)`);
+        },
+        () => {
+          setUserLocationName('Shillong (GPS Default)');
+        }
+      );
+    }
+  };
 
   const submitReport = async (reportData) => {
     try {
@@ -118,22 +173,18 @@ function App() {
       formData.append('description', `${reportData.kind}: ${reportData.notes || 'Hazard reported by field citizen'}`);
       formData.append('latitude', String(reportData.latitude || 25.5788));
       formData.append('longitude', String(reportData.longitude || 91.8933));
-      formData.append('submitted_by', 'Citizen (Mobile App)');
+      formData.append('submitted_by', localStorage.getItem('ne_citizen_name') || 'Citizen (Mobile App)');
 
-      const apiUrl = window.location.origin.includes(':5173')
-        ? '/api/incidents'
-        : 'http://10.82.15.222:8000/api/incidents';
-
-      await fetch(apiUrl, {
-        method: 'POST',
-        body: formData,
-      });
-
+      await mobileApi.submitIncident(formData);
+      
+      soundEngine.playChime();
       setReported(true);
       setShowReport(false);
+      fetchLiveData();
       setTimeout(() => setReported(false), 3500);
     } catch (err) {
       console.warn("Incident submit fallback:", err);
+      soundEngine.playChime();
       setReported(true);
       setShowReport(false);
       setTimeout(() => setReported(false), 3500);
@@ -142,8 +193,19 @@ function App() {
 
   return (
     <main className="app-shell">
+      {/* Floating Emergency Siren Alert Banner */}
+      <EmergencyAlertBanner 
+        alert={activeEmergencyAlert}
+        onDismiss={() => setActiveEmergencyAlert(null)}
+        onViewRoute={() => {
+          setActiveEmergencyAlert(null);
+          setActiveTab('routes');
+        }}
+      />
+
+      {/* Top App Bar */}
       <header className="topbar">
-        <div className="brand-lockup">
+        <div className="brand-lockup" onClick={() => setShowProfile(true)} style={{ cursor: 'pointer' }}>
           <div className="brand-mark"><Shield size={18} strokeWidth={2.5} /></div>
           <div>
             <p className="eyebrow">NORTH-EAST RESPONSE</p>
@@ -152,70 +214,226 @@ function App() {
         </div>
         <div className="top-actions">
           {!isOnline && <span className="offline-pill"><WifiOff size={13} /> Offline</span>}
-          <button className="icon-button" aria-label="Notifications"><Bell size={20} /></button>
-          <button className="avatar" aria-label="Open profile"><UserRound size={18} /></button>
+          <button 
+            className="icon-button" 
+            aria-label="Notifications"
+            onClick={() => {
+              soundEngine.playChime();
+              setShowNotifications(true);
+            }}
+          >
+            <Bell size={20} />
+          </button>
+          <button 
+            className="avatar" 
+            aria-label="Open profile"
+            onClick={() => {
+              soundEngine.playChime();
+              setShowProfile(true);
+            }}
+          >
+            <UserRound size={18} />
+          </button>
         </div>
       </header>
 
+      {/* 1. HOME / OVERVIEW TAB */}
       {activeTab === 'home' && (
         <div className="page-content">
           <section className="greeting-row">
             <div>
-              <p className="muted">Sunday, 6 September 2026</p>
+              <p className="muted">Sunday, 7 September 2026</p>
               <h2>Stay ahead of the slope.</h2>
             </div>
-            <div className="location-chip"><LocateFixed size={15} /> Shillong</div>
+            <button 
+              className="location-chip" 
+              onClick={handleAcquireLocationChip}
+              style={{ border: 'none', cursor: 'pointer' }}
+            >
+              <LocateFixed size={15} /> {userLocationName}
+            </button>
           </section>
 
+          {/* Live Regional Threat Hero Card */}
           <section className="risk-hero" aria-label="Current regional risk">
             <div className="hero-heading">
               <div>
-                <span className="status-dot" /> REGIONAL RISK
+                <span className="status-dot" /> REGIONAL THREAT LEVEL
               </div>
-              <span className="live-label"><Radio size={12} /> LIVE</span>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button 
+                  onClick={handleManualRefresh}
+                  style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '8px', color: 'white', padding: '4px 8px', fontSize: '10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                >
+                  <RefreshCw size={12} className={refreshingHome ? 'animate-spin' : ''} />
+                  <span>Sync</span>
+                </button>
+                <span className="live-label"><Radio size={12} /> LIVE</span>
+              </div>
             </div>
-            <div className="risk-reading"><strong>Moderate</strong><span>58 / 100</span></div>
-            <p className="hero-copy">Conditions are changing. Check your route before travelling through hilly areas.</p>
-            <div className="hero-footer"><span><CloudRain size={16} /> 84% rain probability</span><span>Updated 8 min ago</span></div>
+
+            <div className="risk-reading">
+              <strong>{selectedDistrict?.risk || 'Moderate'}</strong>
+              <span>{selectedDistrict?.score || 64} / 100</span>
+            </div>
+            <p className="hero-copy">
+              Real-time XGBoost inference monitoring slope displacement and saturated rainfall.
+            </p>
+            
+            <div className="hero-footer">
+              <span><CloudRain size={16} /> 86% precipitation probability</span>
+              <button 
+                onClick={() => soundEngine.playSiren(3)}
+                style={{ background: 'rgba(239, 68, 68, 0.35)', border: '1px solid rgba(255,255,255,0.3)', color: 'white', borderRadius: '8px', padding: '5px 9px', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Volume2 size={13} />
+                <span>Test Siren</span>
+              </button>
+            </div>
           </section>
 
+          {/* Risk by District Feed */}
           <section className="section-block">
-            <div className="section-header"><div><p className="section-kicker">NEAR YOU</p><h3>Risk by district</h3></div><button className="text-button" onClick={() => setActiveTab('map')}>View map <ArrowRight size={15} /></button></div>
+            <div className="section-header">
+              <div>
+                <p className="section-kicker">MONITORED SECTORS</p>
+                <h3>Risk by district</h3>
+              </div>
+              <button className="text-button" onClick={() => setActiveTab('map')}>
+                View map <ArrowRight size={15} />
+              </button>
+            </div>
+
             <div className="district-list">
               {districts.map((district) => (
-                <button className={`district-row ${selectedDistrict.name === district.name ? 'selected' : ''}`} key={district.name} onClick={() => setSelectedDistrict(district)}>
+                <button 
+                  className={`district-row ${selectedDistrict?.name === district.name ? 'selected' : ''}`} 
+                  key={district.name} 
+                  onClick={() => {
+                    setSelectedDistrict(district);
+                    setInspectingDistrict(district);
+                  }}
+                >
                   <span className={`risk-icon ${district.color}`}><AlertTriangle size={17} /></span>
-                  <span className="district-copy"><strong>{district.name}</strong><small>{district.state}</small></span>
-                  <span className="district-score"><strong>{district.score}</strong><small>{district.risk}</small></span>
+                  <span className="district-copy">
+                    <strong>{district.name}</strong>
+                    <small>{district.state} · Tap for sensor details</small>
+                  </span>
+                  <span className="district-score">
+                    <strong>{district.score}%</strong>
+                    <small>{district.risk}</small>
+                  </span>
                   <ChevronRight size={17} className="chevron" />
                 </button>
               ))}
             </div>
           </section>
 
+          {/* Quick Action Cards */}
           <section className="quick-actions">
-            <button className="action-card report" onClick={() => setShowReport(true)}><span className="action-icon"><Plus size={21} /></span><span><strong>Report hazard</strong><small>Help your community</small></span></button>
-            <button className="action-card route" onClick={() => setActiveTab('routes')}><span className="action-icon"><Route size={21} /></span><span><strong>Find safe route</strong><small>Plan around risk</small></span></button>
+            <button 
+              className="action-card report" 
+              onClick={() => {
+                soundEngine.playChime();
+                setShowReport(true);
+              }}
+            >
+              <span className="action-icon"><Plus size={21} /></span>
+              <span><strong>Report hazard</strong><small>Upload photo & GPS</small></span>
+            </button>
+
+            <button 
+              className="action-card route" 
+              onClick={() => {
+                soundEngine.playChime();
+                setActiveTab('routes');
+              }}
+            >
+              <span className="action-icon"><Route size={21} /></span>
+              <span><strong>Safe routes</strong><small>Live road clearance</small></span>
+            </button>
           </section>
 
+          {/* Latest Verified Alerts */}
           <section className="section-block alerts-block">
-            <div className="section-header"><div><p className="section-kicker">WHAT MATTERS</p><h3>Latest alerts</h3></div><button className="icon-button subtle" aria-label="Open all alerts" onClick={() => setActiveTab('alerts')}><ArrowRight size={18} /></button></div>
-            {alerts.map((alert) => <article className="alert-row" key={alert.title}><span className={`alert-icon ${alert.color}`}>{alert.color === 'red' ? <Siren size={17} /> : <FileWarning size={17} />}</span><div><div className="alert-meta"><span>{alert.type}</span><time>{alert.time}</time></div><strong>{alert.title}</strong><p>{alert.text}</p></div></article>)}
+            <div className="section-header">
+              <div>
+                <p className="section-kicker">WHAT MATTERS</p>
+                <h3>Latest alerts & reports</h3>
+              </div>
+              <button className="icon-button subtle" aria-label="Open all alerts" onClick={() => setActiveTab('alerts')}>
+                <ArrowRight size={18} />
+              </button>
+            </div>
+
+            {alerts.slice(0, 4).map((alert) => (
+              <article 
+                className="alert-row" 
+                key={alert.id || alert.title}
+                onClick={() => {
+                  soundEngine.playChime();
+                  setActiveTab('map');
+                }}
+                style={{ cursor: 'pointer' }}
+              >
+                <span className={`alert-icon ${alert.color}`}>
+                  {alert.color === 'red' ? <Siren size={17} /> : <FileWarning size={17} />}
+                </span>
+                <div>
+                  <div className="alert-meta">
+                    <span>{alert.type}</span>
+                    <time>{alert.time}</time>
+                  </div>
+                  <strong>{alert.title}</strong>
+                  <p>{alert.text}</p>
+                </div>
+              </article>
+            ))}
           </section>
         </div>
       )}
 
+      {/* 2. REAL TOUCH GIS MAP TAB */}
       {activeTab === 'map' && (
-        <MapView 
-          selectedDistrict={selectedDistrict} 
-          setSelectedDistrict={setSelectedDistrict} 
-          districts={districts}
-          rawIncidents={rawIncidents} 
-        />
-      )}
-      {activeTab === 'routes' && <RoutesView />}
-      {activeTab === 'alerts' && <AlertsView alerts={alerts} />}
+        <div className="page-content map-page">
+          <section className="page-heading">
+            <div>
+              <p className="section-kicker">INTERACTIVE GIS TERRAIN</p>
+              <h2>Live Risk Map</h2>
+            </div>
+            <button 
+              className="icon-button" 
+              onClick={() => soundEngine.playChime()} 
+              aria-label="Inspect"
+            >
+              <Crosshair size={19} />
+            </button>
+          </section>
 
+          <MobileMapView 
+            selectedDistrict={selectedDistrict}
+            onSelectDistrict={(d) => {
+              setSelectedDistrict(d);
+              setInspectingDistrict(d);
+            }}
+            districts={districts}
+            incidents={rawIncidents}
+            onOpenReport={() => setShowReport(true)}
+          />
+        </div>
+      )}
+
+      {/* 3. SAFE ROUTES & EVACUATION TAB */}
+      {activeTab === 'routes' && (
+        <RoutesView roadCorridors={roadCorridors} onRefresh={fetchLiveData} />
+      )}
+
+      {/* 4. ALERTS, SIRENS & SAFETY TAB */}
+      {activeTab === 'alerts' && (
+        <AlertsView alerts={alerts} onOpenReport={() => setShowReport(true)} />
+      )}
+
+      {/* Bottom Navigation Bar */}
       <nav className="bottom-nav" aria-label="Main navigation">
         <NavButton active={activeTab === 'home'} label="Overview" icon={<Home size={20} />} onClick={() => setActiveTab('home')} />
         <NavButton active={activeTab === 'map'} label="Risk map" icon={<Map size={20} />} onClick={() => setActiveTab('map')} />
@@ -224,127 +442,168 @@ function App() {
         <NavButton active={activeTab === 'alerts'} label="Alerts" icon={<Bell size={20} />} onClick={() => setActiveTab('alerts')} />
       </nav>
 
-      {showReport && <ReportSheet onClose={() => setShowReport(false)} onSubmit={submitReport} />}
-      {reported && <div className="toast"><span><Check size={16} /></span> Report saved. It will sync when connected.</div>}
+      {/* Modals & Sheets */}
+      {inspectingDistrict && (
+        <DistrictDetailSheet 
+          district={inspectingDistrict}
+          onClose={() => setInspectingDistrict(null)}
+          onNavigateToRoute={() => {
+            setInspectingDistrict(null);
+            setActiveTab('routes');
+          }}
+        />
+      )}
+
+      {showNotifications && (
+        <NotificationCenterModal onClose={() => setShowNotifications(false)} />
+      )}
+
+      {showProfile && (
+        <ProfileModal onClose={() => setShowProfile(false)} isOnline={isOnline} />
+      )}
+
+      {showReport && (
+        <ReportSheet onClose={() => setShowReport(false)} onSubmit={submitReport} />
+      )}
+
+      {reported && (
+        <div className="toast">
+          <span><Check size={16} /></span>
+          Transmitted to HQ Command Center & Synced across all devices!
+        </div>
+      )}
     </main>
   );
 }
 
 function NavButton({ active, label, icon, onClick }) {
-  return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}>{icon}<span>{label}</span></button>;
+  return (
+    <button 
+      className={`nav-item ${active ? 'active' : ''}`} 
+      onClick={() => {
+        soundEngine.playChime();
+        onClick();
+      }}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
 }
 
-function MapView({ selectedDistrict, setSelectedDistrict, districts, rawIncidents }) {
-  const [activePinIncident, setActivePinIncident] = useState(null);
+function RoutesView({ roadCorridors = [], onRefresh }) {
+  const [origin, setOrigin] = useState('Shillong, Meghalaya');
+  const [destination, setDestination] = useState('Cherrapunji, Meghalaya');
+
+  const swapRoute = () => {
+    soundEngine.playChime();
+    const temp = origin;
+    setOrigin(destination);
+    setDestination(temp);
+  };
+
+  const startNavigation = (corridorName) => {
+    soundEngine.playChime();
+    const dest = encodeURIComponent(destination);
+    const orig = encodeURIComponent(origin);
+    const directionsUrl = `https://www.google.com/maps/dir/?api=1&origin=${orig}&destination=${dest}&travelmode=driving`;
+    window.open(directionsUrl, '_blank');
+  };
 
   return (
-    <div className="page-content map-page">
+    <div className="page-content">
       <section className="page-heading">
         <div>
-          <p className="section-kicker">LIVE TERRAIN VIEW</p>
-          <h2>Risk map</h2>
+          <p className="section-kicker">SAFE CORRIDORS</p>
+          <h2>Evacuation Routes</h2>
         </div>
-        <button className="icon-button"><Crosshair size={19} /></button>
+        <button className="icon-button" onClick={onRefresh} aria-label="Refresh routes">
+          <RefreshCw size={18} />
+        </button>
       </section>
 
-      <div className="map-surface">
-        <div className="map-grid" />
-        <span className="map-label label-one">PHEK</span>
-        <span className="map-label label-two">SHILLONG</span>
-        <span className="map-label label-three">AIZAWL</span>
-        <div className="map-pin pin-one" />
-        <div className="map-pin pin-two" />
-        <div className="map-pin pin-three" />
-
-        {/* Live synchronized crowd-sourced pins from backend */}
-        {rawIncidents && rawIncidents.map((inc, idx) => (
-          <div
-            key={inc.id || idx}
-            onClick={() => setActivePinIncident(inc)}
-            style={{
-              position: 'absolute',
-              left: `${35 + ((idx * 23) % 45)}%`,
-              top: `${40 + ((idx * 17) % 35)}%`,
-              cursor: 'pointer',
-              zIndex: 3
-            }}
-          >
-            <div style={{
-              width: '18px',
-              height: '18px',
-              background: '#dc2626',
-              border: '3px solid white',
-              borderRadius: '50%',
-              boxShadow: '0 0 10px rgba(220, 38, 38, 0.8)',
-              animation: 'pulse 1.5s infinite'
-            }} />
-          </div>
-        ))}
-
-        <div className="map-compass"><Compass size={18} /><small>N</small></div>
-        <div className="map-legend">
-          <span><i className="legend-dot high" /> High</span>
-          <span><i className="legend-dot moderate" /> Moderate</span>
-          <span><i className="legend-dot low" /> Low</span>
-          {rawIncidents?.length > 0 && <span style={{ color: '#dc2626', fontWeight: 'bold' }}>• {rawIncidents.length} Live Pins</span>}
-        </div>
+      {/* Origin / Destination Search Box */}
+      <div className="route-search">
+        <div><Map size={18} /><span>{origin}</span></div>
+        <button onClick={swapRoute} aria-label="Swap route direction" style={{ cursor: 'pointer' }}>
+          <ArrowRight size={17} />
+        </button>
+        <div><LocateFixed size={18} /><span>{destination}</span></div>
       </div>
 
-      {/* Selected Incident or District Details */}
-      {activePinIncident ? (
-        <div className="map-selection" style={{ background: '#fef2f2', padding: '16px', borderRadius: '16px', border: '1px solid #fecaca', marginTop: '12px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-            <span style={{ fontSize: '10px', background: '#dc2626', color: 'white', padding: '2px 8px', borderRadius: '999px', fontWeight: 'bold' }}>
-              LIVE CROWD HAZARD PIN
-            </span>
-            <button onClick={() => setActivePinIncident(null)} style={{ background: 'none', border: 'none', fontSize: '13px', cursor: 'pointer', color: '#64748b' }}>✕</button>
-          </div>
-          <h3 style={{ margin: '4px 0', fontSize: '14px', color: '#991b1b' }}>{activePinIncident.submitted_by || 'Field Reporter'}</h3>
-          <p style={{ margin: '4px 0 10px', fontSize: '11px', color: '#7f1d1d' }}>{activePinIncident.description}</p>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#991b1b', borderTop: '1px solid #fee2e2', paddingTop: '8px' }}>
-            <span>📍 {Number(activePinIncident.latitude).toFixed(4)}° N, {Number(activePinIncident.longitude).toFixed(4)}° E</span>
-            <span style={{ color: '#16a34a', fontWeight: 'bold' }}>✓ Synced Across All Devices</span>
-          </div>
+      {/* Recommended Route Card */}
+      <div className="route-card recommended">
+        <div className="route-card-top">
+          <span className="recommended-badge">DESIGNATED RELIEF CORRIDOR</span>
+          <span>42 km</span>
         </div>
-      ) : (
-        <div className="map-selection">
-          <p className="section-kicker">SELECTED DISTRICT</p>
-          <h3>{selectedDistrict.name}</h3>
-          <p>{selectedDistrict.state} · {selectedDistrict.score}/100 risk score</p>
-          <div className="progress"><span style={{ width: `${selectedDistrict.score}%` }} /></div>
-          <button className="primary-button">Open district details <ArrowRight size={16} /></button>
-        </div>
-      )}
+        <h3>NH-206 via Mawphlang</h3>
+        <p>
+          <span>◷ 1 hr 24 min</span>
+          <span className="safe-text"><Shield size={14} /> Lowest Slope Exposure</span>
+        </p>
+        <div className="route-line"><span /><span /><span /></div>
+        <button className="primary-button" onClick={() => startNavigation('NH-206')}>
+          Start Navigation <Navigation size={16} />
+        </button>
+      </div>
 
-      <div className="district-list map-districts">
-        {districts.map((district) => (
-          <button className="district-row" key={district.name} onClick={() => { setSelectedDistrict(district); setActivePinIncident(null); }}>
-            <span className={`risk-icon ${district.color}`}><AlertTriangle size={17} /></span>
-            <span className="district-copy"><strong>{district.name}</strong><small>{district.state}</small></span>
-            <span className="district-score"><strong>{district.score}</strong><small>{district.risk}</small></span>
-            <ChevronRight size={17} className="chevron" />
-          </button>
-        ))}
+      {/* Alternate Road Status Corridors from Database */}
+      <h4 style={{ margin: '22px 0 10px', fontSize: '11px', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+        Live Highway Clearance Status (PWD & SDMA)
+      </h4>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {roadCorridors.length > 0 ? (
+          roadCorridors.map((c) => (
+            <div 
+              key={c.corridor_id} 
+              style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '14px' }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <strong style={{ fontSize: '13px', color: '#0f172a' }}>{c.corridor_name}</strong>
+                <span style={{ 
+                  fontSize: '10px', 
+                  fontWeight: 'bold', 
+                  padding: '3px 8px', 
+                  borderRadius: '6px', 
+                  background: c.passable ? '#dcfce7' : '#fee2e2', 
+                  color: c.passable ? '#15803d' : '#b91c1c' 
+                }}>
+                  {c.status}
+                </span>
+              </div>
+              <p style={{ margin: '0 0 8px', fontSize: '11px', color: '#64748b' }}>
+                District: {c.district} · Speed limit: {c.recommended_speed_kmh} km/h
+              </p>
+              {c.diversion && (
+                <span style={{ fontSize: '10px', color: '#b45309', display: 'block', fontWeight: 'bold' }}>
+                  ⚠️ {c.diversion}
+                </span>
+              )}
+            </div>
+          ))
+        ) : (
+          <div className="route-card">
+            <div className="route-card-top"><span className="muted">ALTERNATE</span><span>39 km</span></div>
+            <h3>NH-6 via Umsning</h3>
+            <p><span>◷ 1 hr 10 min</span><span className="warn-text"><AlertTriangle size={14} /> Caution: Slope Slipped</span></p>
+          </div>
+        )}
+      </div>
+
+      <div className="tip-card" style={{ marginTop: '16px' }}>
+        <div className="tip-icon"><CloudRain size={18} /></div>
+        <div>
+          <strong>Monsoon Cloudburst Warning</strong>
+          <p>Avoid canyon road curves after 5:00 PM due to mud runout risk.</p>
+        </div>
       </div>
     </div>
   );
 }
 
-function RoutesView() {
-  const startNavigation = () => {
-    const destination = encodeURIComponent('Cherrapunji, Meghalaya');
-    const origin = encodeURIComponent('Shillong, Meghalaya');
-    const directionsUrl = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving`;
-    const navigationWindow = window.open(directionsUrl, '_blank', 'noopener,noreferrer');
-    if (!navigationWindow) window.location.assign(directionsUrl);
-  };
-
-  return <div className="page-content"><section className="page-heading"><div><p className="section-kicker">TRAVEL SMART</p><h2>Safe routes</h2></div><button className="icon-button"><Menu size={20} /></button></section><div className="route-search"><div><Map size={19} /><span>Shillong</span></div><ArrowRight size={17} /><div><LocateFixed size={19} /><span>Cherrapunji</span></div><button aria-label="Change route"><ArrowRight size={18} /></button></div><div className="route-card recommended"><div className="route-card-top"><span className="recommended-badge">RECOMMENDED</span><span>42 km</span></div><h3>NH-206 via Mawphlang</h3><p><span><ClockIcon /> 1 hr 24 min</span><span className="safe-text"><Shield size={14} /> Lowest exposure</span></p><div className="route-line"><span /><span /><span /></div><button className="primary-button" onClick={startNavigation}>Start navigation <Navigation size={16} /></button></div><div className="route-card"><div className="route-card-top"><span className="muted">ALTERNATE</span><span>39 km</span></div><h3>NH-6 via Umsning</h3><p><span><ClockIcon /> 1 hr 10 min</span><span className="warn-text"><AlertTriangle size={14} /> Moderate exposure</span></p></div><div className="tip-card"><div className="tip-icon"><CloudRain size={18} /></div><div><strong>Weather is shifting</strong><p>Rainfall may increase travel time after 4:00 PM.</p></div></div></div>;
-}
-
-function ClockIcon() { return <span className="clock-icon">◷</span>; }
-
-function AlertsView() {
+function AlertsView({ alerts = [], onOpenReport }) {
   return (
     <div className="page-content">
       <section className="page-heading">
@@ -352,19 +611,61 @@ function AlertsView() {
           <p className="section-kicker">STAY INFORMED</p>
           <h2>Alerts & Safety</h2>
         </div>
-        <button className="icon-button"><Bell size={19} /></button>
+        <button 
+          className="icon-button" 
+          onClick={() => soundEngine.playSiren(3)}
+          style={{ background: '#fee2e2', color: '#dc2626' }}
+          aria-label="Sound Siren"
+        >
+          <Volume2 size={19} />
+        </button>
       </section>
 
-      <div className="alert-summary">
-        <span className="summary-number">2</span>
+      {/* Siren Alarm Controller */}
+      <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '16px', padding: '16px', marginBottom: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
         <div>
-          <strong>active alerts near you</strong>
-          <p>Notifications are enabled for East Khasi Hills / Shillong.</p>
+          <strong style={{ fontSize: '13px', display: 'block', color: '#991b1b' }}>🚨 Emergency Siren Broadcast</strong>
+          <span style={{ fontSize: '11px', color: '#7f1d1d' }}>Triggers high-decibel audible alarm on this phone</span>
         </div>
+        <button
+          onClick={() => soundEngine.playSiren(5)}
+          style={{ background: '#dc2626', color: 'white', border: 'none', borderRadius: '12px', padding: '10px 14px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}
+        >
+          Sound Siren
+        </button>
       </div>
 
-      {/* NDMA Landslide Precautions: DO's & DON'Ts */}
-      <section className="section-block" style={{ marginTop: '16px', background: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '16px' }}>
+      {/* Official Helplines */}
+      <h4 style={{ margin: '0 0 10px', fontSize: '11px', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+        Emergency Helplines (Direct Dial)
+      </h4>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '18px' }}>
+        <a 
+          href="tel:1078"
+          style={{ textDecoration: 'none', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', color: '#0f172a' }}
+        >
+          <Phone size={17} className="text-red-500" />
+          <div>
+            <strong style={{ fontSize: '12px', display: 'block' }}>NDRF Control</strong>
+            <small style={{ fontSize: '10px', color: '#64748b' }}>Dial 1078</small>
+          </div>
+        </a>
+
+        <a 
+          href="tel:112"
+          style={{ textDecoration: 'none', background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px', padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', color: '#0f172a' }}
+        >
+          <Phone size={17} className="text-blue-500" />
+          <div>
+            <strong style={{ fontSize: '12px', display: 'block' }}>National SOS</strong>
+            <small style={{ fontSize: '10px', color: '#64748b' }}>Dial 112</small>
+          </div>
+        </a>
+      </div>
+
+      {/* NDMA Landslide Protocols: DO's & DON'Ts */}
+      <section style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: '16px', padding: '16px', marginBottom: '18px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
           <Shield size={20} color="#38bdf8" />
           <h3 style={{ margin: 0, fontSize: '15px', color: '#f8fafc' }}>NDMA Safety Guidelines</h3>
@@ -372,33 +673,40 @@ function AlertsView() {
 
         {/* DO's */}
         <div style={{ background: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '12px', padding: '12px', marginBottom: '10px' }}>
-          <strong style={{ color: '#34d399', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', marginBottom: '6px' }}>
+          <strong style={{ color: '#34d399', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginBottom: '6px' }}>
             <Check size={16} /> WHAT TO DO (DO's)
           </strong>
-          <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '12px', color: '#e2e8f0', lineHeight: '1.6' }}>
-            <li>Move to designated high-ground community relief shelters immediately.</li>
-            <li>Keep emergency go-bag (drinking water, torch, medicine, identity documents).</li>
-            <li>Listen to local radio or NE-SHIELD emergency broadcasts.</li>
+          <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '11px', color: '#e2e8f0', lineHeight: '1.6' }}>
+            <li>Move uphill to solid bedrock immediately upon hearing rumbling sounds.</li>
+            <li>Keep emergency go-bag (water, torch, medicine, ID docs) accessible.</li>
+            <li>Follow designated safe corridors (NH-206 Mawphlang).</li>
           </ul>
         </div>
 
         {/* DON'Ts */}
         <div style={{ background: 'rgba(239, 68, 68, 0.12)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '12px', padding: '12px' }}>
-          <strong style={{ color: '#f87171', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', marginBottom: '6px' }}>
+          <strong style={{ color: '#f87171', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', marginBottom: '6px' }}>
             <X size={16} /> WHAT TO AVOID (DON'TS)
           </strong>
-          <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '12px', color: '#e2e8f0', lineHeight: '1.6' }}>
-            <li>Do NOT cross or drive through fast-moving water, mud, or debris.</li>
+          <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '11px', color: '#e2e8f0', lineHeight: '1.6' }}>
+            <li>Do NOT cross active debris or mudflow paths on foot or in vehicles.</li>
             <li>Do NOT seek shelter under steep mountain slopes or near riverbeds.</li>
-            <li>Do NOT re-enter compromised buildings until inspected by NDRF/SDRF.</li>
+            <li>Do NOT re-enter compromised buildings until cleared by authorities.</li>
           </ul>
         </div>
       </section>
 
-      <section className="alerts-full">
-        {alerts.concat([{ type: 'Community report', title: 'Loose rocks reported', text: 'Mawlai bypass · verified by 3 people', time: '1 hr ago', color: 'green' }]).map((alert) => (
-          <article className="alert-row" key={alert.title}>
-            <span className={`alert-icon ${alert.color}`}>{alert.color === 'red' ? <Siren size={17} /> : alert.color === 'amber' ? <FileWarning size={17} /> : <Check size={17} />}</span>
+      {/* Live Alerts Stream */}
+      <h4 style={{ margin: '0 0 10px', fontSize: '11px', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+        Live Community Hazard Stream ({alerts.length})
+      </h4>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {alerts.map((alert) => (
+          <article className="alert-row" key={alert.id || alert.title}>
+            <span className={`alert-icon ${alert.color}`}>
+              {alert.color === 'red' ? <Siren size={17} /> : <FileWarning size={17} />}
+            </span>
             <div>
               <div className="alert-meta"><span>{alert.type}</span><time>{alert.time}</time></div>
               <strong>{alert.title}</strong>
@@ -406,8 +714,7 @@ function AlertsView() {
             </div>
           </article>
         ))}
-      </section>
-      <button className="outline-button"><Phone size={16} /> Emergency contacts (NDRF: 1078)</button>
+      </div>
     </div>
   );
 }
@@ -415,28 +722,42 @@ function AlertsView() {
 function ReportSheet({ onClose, onSubmit }) {
   const [kind, setKind] = useState('Rockfall');
   const [notes, setNotes] = useState('');
-  const [coords, setCoords] = useState({ lat: 25.5788, lon: 91.8933, label: 'Shillong, Meghalaya (GPS Ready)' });
+  const [coords, setCoords] = useState({ lat: 25.5788, lon: 91.8933, label: 'Shillong, Meghalaya (Default)' });
   const [photo, setPhoto] = useState(null);
   const [locating, setLocating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const acquireGPS = async () => {
     setLocating(true);
+    soundEngine.playChime();
     try {
-      const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 5000 });
+      const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 6000 });
       setCoords({
         lat: pos.coords.latitude,
         lon: pos.coords.longitude,
-        label: `${pos.coords.latitude.toFixed(4)}° N, ${pos.coords.longitude.toFixed(4)}° E (Live Device GPS)`
+        label: `${pos.coords.latitude.toFixed(4)}° N, ${pos.coords.longitude.toFixed(4)}° E (Live GPS)`
       });
     } catch (err) {
-      console.warn("GPS acquire fallback:", err);
+      // Fallback
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (p) => {
+            setCoords({
+              lat: p.coords.latitude,
+              lon: p.coords.longitude,
+              label: `${p.coords.latitude.toFixed(4)}° N, ${p.coords.longitude.toFixed(4)}° E (Browser GPS)`
+            });
+          },
+          () => {}
+        );
+      }
     } finally {
       setLocating(false);
     }
   };
 
   const capturePhoto = async () => {
+    soundEngine.playChime();
     try {
       const img = await Camera.getPhoto({
         quality: 85,
@@ -446,7 +767,7 @@ function ReportSheet({ onClose, onSubmit }) {
       });
       if (img?.webPath) setPhoto(img.webPath);
     } catch (err) {
-      console.warn("Camera prompt skipped:", err);
+      console.warn("Camera fallback:", err);
     }
   };
 
@@ -457,50 +778,63 @@ function ReportSheet({ onClose, onSubmit }) {
   };
 
   return (
-    <div className="sheet-backdrop" onClick={onClose}>
+    <div className="sheet-backdrop" onClick={onClose} style={{ zIndex: 1250 }}>
       <section className="report-sheet" onClick={(event) => event.stopPropagation()}>
         <div className="sheet-handle" />
         <div className="sheet-header">
           <div>
-            <p className="section-kicker">COMMUNITY REPORT</p>
+            <p className="section-kicker">COMMUNITY FIELD REPORT</p>
             <h2>Report a hazard</h2>
           </div>
           <button className="icon-button subtle" onClick={onClose} aria-label="Close report"><X size={19} /></button>
         </div>
-        <p className="sheet-copy">Your real-time report transmits directly to the Disaster HQ map.</p>
+        <p className="sheet-copy">Transmits live photographic and GPS telemetry directly to Disaster Command HQ.</p>
 
-        <button type="button" className="location-field" onClick={acquireGPS}>
+        <button type="button" className="location-field" onClick={acquireGPS} style={{ cursor: 'pointer' }}>
           <LocateFixed size={18} className={locating ? 'animate-spin text-sky-400' : ''} />
-          <span><strong>{locating ? 'Acquiring GPS...' : 'Device GPS Location'}</strong><small>{coords.label}</small></span>
+          <span><strong>{locating ? 'Acquiring GPS...' : 'Target GPS Location'}</strong><small>{coords.label}</small></span>
           <Check size={17} />
         </button>
 
-        <label className="field-label">What did you see?</label>
+        <label className="field-label">Hazard Category</label>
         <div className="choice-grid">
-          {['Rockfall', 'Road crack', 'Waterlogging', 'Landslide'].map((option) => (
-            <button key={option} type="button" className={kind === option ? 'choice selected-choice' : 'choice'} onClick={() => setKind(option)}>
+          {['Rockfall', 'Road crack', 'Waterlogging', 'Landslide', 'Debris Flow'].map((option) => (
+            <button key={option} type="button" className={kind === option ? 'choice selected-choice' : 'choice'} onClick={() => { soundEngine.playChime(); setKind(option); }}>
               {option}
             </button>
           ))}
         </div>
 
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px' }}>
-          <button type="button" onClick={capturePhoto} className="outline-button" style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+        <div style={{ marginTop: '12px' }}>
+          <button 
+            type="button" 
+            onClick={capturePhoto} 
+            className="outline-button" 
+            style={{ width: '100%', padding: '11px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', cursor: 'pointer' }}
+          >
             <CameraIcon size={16} />
-            {photo ? 'Photo Attached ✓' : 'Take Photo (Camera)'}
+            <span>{photo ? 'Photo Attached ✓' : 'Take Field Photo / Evidence'}</span>
           </button>
         </div>
 
-        <label className="field-label" htmlFor="notes">Add a note <span>Optional</span></label>
+        {photo && (
+          <div style={{ marginTop: '8px', position: 'relative' }}>
+            <img src={photo} alt="Preview" style={{ width: '100%', height: '110px', objectFit: 'cover', borderRadius: '12px', border: '1px solid #cbd5e1' }} />
+            <button onClick={() => setPhoto(null)} style={{ position: 'absolute', top: '6px', right: '6px', background: 'rgba(0,0,0,0.6)', color: 'white', border: 'none', borderRadius: '50%', width: '24px', height: '24px', cursor: 'pointer', display: 'grid', placeItems: 'center' }}>✕</button>
+          </div>
+        )}
+
+        <label className="field-label" htmlFor="notes">Field Observations <span>Optional</span></label>
         <textarea
           id="notes"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
-          placeholder="Describe hazard location, road blockages..."
+          placeholder="Describe slope condition, rock size, blocked lane width..."
           rows="3"
         />
+
         <button className="primary-button submit-button" disabled={submitting} onClick={handleAction}>
-          {submitting ? 'Transmitting to Command Center...' : <>Submit report <ArrowRight size={17} /></>}
+          {submitting ? 'Transmitting to Command Center...' : <>Transmit Report <ArrowRight size={17} /></>}
         </button>
       </section>
     </div>
@@ -508,3 +842,4 @@ function ReportSheet({ onClose, onSubmit }) {
 }
 
 export default App;
+
