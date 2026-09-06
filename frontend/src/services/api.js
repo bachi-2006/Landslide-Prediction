@@ -13,6 +13,7 @@ export const riskService = {
     refreshRisk: (id, lat, lon, name) =>
         api.post(`/risk/refresh/${id}`, null, { params: { lat, lon, name } }),
     simulateRisk: (payload) => api.post('/risk/simulate', payload),
+    calculatePointRisk: (lat, lon, label) => api.post('/risk/point', { lat, lon, label }),
 };
 
 export const incidentService = {

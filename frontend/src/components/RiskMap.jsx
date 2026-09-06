@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap } from 'react-leaflet';
+import React, { useEffect, useState, useRef } from 'react';
+import { MapContainer, TileLayer, GeoJSON, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { riskService, incidentService } from '../services/api';
 import { subscribeToMapUpdates } from '../services/supabase';
-import { Layers, MapPin, History, Eye, EyeOff, Navigation, Radio, Activity, ShieldCheck } from 'lucide-react';
+import { Layers, MapPin, History, Eye, EyeOff, Navigation, Radio, Activity, ShieldCheck, BarChart3, AlertOctagon } from 'lucide-react';
+import PointAnalyticsModal from './PointAnalyticsModal';
+import { soundEngine } from '../services/soundEngine';
 
 // Fix for Leaflet default marker icons
 delete L.Icon.Default.prototype._getIconUrl;
@@ -12,6 +14,21 @@ L.Icon.Default.mergeOptions({
     iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
     iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
     shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+});
+
+const incidentIcon = L.divIcon({
+    className: 'custom-hazard-pin',
+    html: `
+        <div style="position: relative; width: 30px; height: 30px;">
+            <div style="position: absolute; inset: -4px; background: rgba(239, 68, 68, 0.4); border-radius: 50%; animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
+            <div style="width: 28px; height: 28px; background: #dc2626; border: 2.5px solid #ffffff; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 4px 12px rgba(220, 38, 38, 0.6); display: flex; align-items: center; justify-content: center;">
+                <div style="width: 8px; height: 8px; background: white; border-radius: 50%;"></div>
+            </div>
+        </div>
+    `,
+    iconSize: [30, 30],
+    iconAnchor: [15, 30],
+    popupAnchor: [0, -30]
 });
 
 const riskColors = {
@@ -34,6 +51,30 @@ const mapLayers = {
         url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
         attribution: 'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap (CC-BY-SA)'
     }
+};
+
+const inspectionIcon = L.divIcon({
+    className: 'custom-inspection-pin',
+    html: `
+        <div style="position: relative; width: 32px; height: 32px;">
+            <div style="position: absolute; inset: -4px; background: rgba(59, 130, 246, 0.4); border-radius: 50%; animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
+            <div style="width: 30px; height: 30px; background: #2563eb; border: 2.5px solid #ffffff; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 4px 12px rgba(37, 99, 235, 0.6); display: flex; align-items: center; justify-content: center;">
+                <div style="width: 8px; height: 8px; background: white; border-radius: 50%;"></div>
+            </div>
+        </div>
+    `,
+    iconSize: [32, 32],
+    iconAnchor: [16, 32],
+    popupAnchor: [0, -32]
+});
+
+const MapEventsClickHandler = ({ onMapClick }) => {
+    useMapEvents({
+        click: (e) => {
+            onMapClick(e.latlng.lat, e.latlng.lng);
+        },
+    });
+    return null;
 };
 
 const RouteViewport = ({ route }) => {
@@ -62,6 +103,11 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded }) => {
     const [showIncidents, setShowIncidents] = useState(true);
     const [showControlPanel, setShowControlPanel] = useState(true);
 
+    // Inspection & Analytics state for any pin or map click
+    const [inspectedPoint, setInspectedPoint] = useState(null);
+    const [analyticsModalData, setAnalyticsModalData] = useState(null);
+    const prevIncidentCountRef = useRef(0);
+
     useEffect(() => {
         let active = true;
         const loadMapData = async () => {
@@ -79,10 +125,18 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded }) => {
                     incidentService.getIncidents(),
                 ]);
                 if (!active) return;
+                const newIncidents = incidentResponse.data.data || [];
+                
+                // If a brand-new incident report arrived, play emergency chime
+                if (prevIncidentCountRef.current > 0 && newIncidents.length > prevIncidentCountRef.current) {
+                    soundEngine.playChime();
+                }
+                prevIncidentCountRef.current = newIncidents.length;
+
                 setGeoJsonData(districtResponse);
                 setHistoricalLandslides(landslideResponse);
                 setRisks(riskResponse.data.data || []);
-                setIncidents(incidentResponse.data.data || []);
+                setIncidents(newIncidents);
                 onDataLoaded?.({ geoJsonData: districtResponse, risks: riskResponse.data.data || [] });
                 setError(null);
             } catch (loadError) {
@@ -99,6 +153,10 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded }) => {
             clearInterval(pollTimer);
         };
     }, [refreshKey]);
+
+    const handleMapClick = (lat, lon) => {
+        setInspectedPoint({ lat, lon });
+    };
 
     const onEachDistrictFeature = (feature, layer) => {
         const risk = risks.find(item => item.district_id === feature.properties.id);
@@ -206,16 +264,92 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded }) => {
                     />
                 )}
 
+                <MapEventsClickHandler onMapClick={handleMapClick} />
+
+                {/* Dropped Inspection Pin */}
+                {inspectedPoint && (
+                    <Marker position={[inspectedPoint.lat, inspectedPoint.lon]} icon={inspectionIcon}>
+                        <Popup autoPan={true}>
+                            <div className="p-3 max-w-[260px] text-xs font-sans">
+                                <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2">
+                                    <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
+                                        Inspection Point
+                                    </span>
+                                    <span className="font-mono text-[10px] text-slate-400">
+                                        {Number(inspectedPoint.lat).toFixed(3)}°, {Number(inspectedPoint.lon).toFixed(3)}°
+                                    </span>
+                                </div>
+                                <p className="text-slate-600 text-[11px] mb-3">
+                                    Calculate micro-site topographical slope, weather telemetry and live XGBoost risk percentage at this exact point.
+                                </p>
+                                <button
+                                    onClick={() => setAnalyticsModalData({
+                                        lat: inspectedPoint.lat,
+                                        lon: inspectedPoint.lon,
+                                        label: 'Direct Map Pin'
+                                    })}
+                                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                                >
+                                    <BarChart3 size={14} />
+                                    <span>Calculate Real-Time Analytics</span>
+                                </button>
+                            </div>
+                        </Popup>
+                    </Marker>
+                )}
+
                 {showIncidents && incidents.map(inc => (
-                    <Marker key={inc.id} position={[inc.latitude, inc.longitude]}>
-                        <Popup>
-                            <div className="p-2 max-w-xs text-xs">
-                                <span class="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded">Citizen Report</span>
-                                <h3 className="font-bold text-slate-800 mt-1 text-sm">{inc.submitted_by || 'Anonymous'}</h3>
-                                <p className="text-slate-600 mt-1">{inc.description}</p>
-                                {inc.photo_url && (
-                                    <img src={inc.photo_url} alt="Incident" className="mt-2 w-full h-32 object-cover rounded-lg border" />
+                    <Marker key={inc.id} position={[inc.latitude, inc.longitude]} icon={incidentIcon}>
+                        <Popup className="incident-custom-popup">
+                            <div className="p-3 max-w-[280px] text-xs font-sans">
+                                <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 mb-2">
+                                    <span className="bg-red-50 text-red-700 border border-red-200 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
+                                        Citizen Hazard Report
+                                    </span>
+                                    <span className="text-[10px] text-slate-500 font-mono">
+                                        {inc.created_at ? new Date(inc.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live'}
+                                    </span>
+                                </div>
+
+                                <h3 className="font-extrabold text-slate-900 text-sm mb-1">{inc.submitted_by || 'Field Reporter'}</h3>
+                                
+                                <p className="text-slate-700 leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs mb-2.5">
+                                    {inc.description}
+                                </p>
+
+                                {inc.photo_url ? (
+                                    <div className="mb-2">
+                                        <img src={inc.photo_url} alt="Incident Evidence" className="w-full h-32 object-cover rounded-xl border border-slate-200 shadow-sm" />
+                                        <span className="text-[10px] text-slate-400 block mt-1">Field Photographic Evidence</span>
+                                    </div>
+                                ) : (
+                                    <div className="bg-slate-100/70 p-2 rounded-lg text-[10px] text-slate-600 mb-2 flex items-center justify-between">
+                                        <span>📍 GPS Coordinates</span>
+                                        <span className="font-mono font-bold">{Number(inc.latitude).toFixed(4)}° N, {Number(inc.longitude).toFixed(4)}° E</span>
+                                    </div>
                                 )}
+
+                                {/* Real-Time Analytics & Risk Calculation CTA */}
+                                <button
+                                    onClick={() => setAnalyticsModalData({
+                                        lat: inc.latitude,
+                                        lon: inc.longitude,
+                                        label: `Hazard: ${inc.description.slice(0, 25)}...`,
+                                        incidentInfo: inc
+                                    })}
+                                    className="w-full mb-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                                >
+                                    <BarChart3 size={14} className="text-red-400" />
+                                    <span>View Real-Time Analytics & Risk %</span>
+                                </button>
+
+                                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
+                                    <span className="text-emerald-600 font-bold flex items-center gap-1">
+                                        ✓ Synced to HQ & Mobile
+                                    </span>
+                                    <span>{inc.created_at ? new Date(inc.created_at).toLocaleDateString() : 'Today'}</span>
+                                </div>
                             </div>
                         </Popup>
                     </Marker>
@@ -377,6 +511,22 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded }) => {
                     </div>
                 </div>
             </div>
+
+            {/* Micro-Site Real-Time Analytics & Risk Calculation Modal */}
+            {analyticsModalData && (
+                <PointAnalyticsModal
+                    pointData={analyticsModalData}
+                    onClose={() => setAnalyticsModalData(null)}
+                    onNavigateRoute={({ lat, lon }) => {
+                        // Find closest district centroid to trigger safe evacuation corridor
+                        const match = geoJsonData?.features?.find(f => {
+                            const [minLon, minLat, maxLon, maxLat] = L.geoJSON(f).getBounds();
+                            return lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon;
+                        }) || geoJsonData?.features?.[0];
+                        if (match) setSelectedDistrict(match);
+                    }}
+                />
+            )}
         </div>
     );
 };

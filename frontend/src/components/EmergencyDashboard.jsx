@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ShieldAlert, PhoneCall, AlertTriangle, ChevronRight, X, Radio } from 'lucide-react';
 import { getTranslation } from '../services/i18n';
-import axios from 'axios';
+import { alertService } from '../services/api';
 
 const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lang }) => {
     const t = (key) => getTranslation(lang, key);
@@ -43,8 +43,7 @@ const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lan
         setBroadcasting(true);
         setBroadcastStatus(null);
         try {
-            const apiBase = import.meta.env.VITE_API_URL || '/api';
-            await axios.post(`${apiBase}/alert/broadcast`, {
+            await alertService.broadcastAlert({
                 district_id: districtId,
                 level: level,
                 message: `URGENT LANDSLIDE ALERT for ${districtName}: High slope instability detected. Avoid vulnerable hill roads.`,
@@ -52,7 +51,7 @@ const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lan
             });
             setBroadcastStatus(`Broadcast dispatched for ${districtName} via App Push & SMS!`);
         } catch (e) {
-            setBroadcastStatus(`Alert broadcast simulated for ${districtName}`);
+            setBroadcastStatus(`Broadcast failed or authority key invalid for ${districtName}.`);
         } finally {
             setBroadcasting(false);
         }

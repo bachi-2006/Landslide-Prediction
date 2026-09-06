@@ -59,6 +59,8 @@ function App() {
     };
   }, []);
 
+  const [rawIncidents, setRawIncidents] = useState([]);
+
   // Plumb live backend API data
   useEffect(() => {
     const fetchLiveData = async () => {
@@ -87,12 +89,15 @@ function App() {
         if (incRes.ok) {
           const json = await incRes.json();
           if (json.data && json.data.length > 0) {
+            setRawIncidents(json.data);
             const mappedIncidents = json.data.map(inc => ({
               type: 'Citizen Report',
               title: inc.description.slice(0, 30),
               text: `${inc.description} · ${inc.submitted_by}`,
               time: 'Live',
-              color: 'red'
+              color: 'red',
+              latitude: inc.latitude,
+              longitude: inc.longitude
             }));
             setAlerts(mappedIncidents);
           }
@@ -103,7 +108,7 @@ function App() {
     };
 
     fetchLiveData();
-    const interval = setInterval(fetchLiveData, 10000);
+    const interval = setInterval(fetchLiveData, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -200,9 +205,16 @@ function App() {
         </div>
       )}
 
-      {activeTab === 'map' && <MapView selectedDistrict={selectedDistrict} setSelectedDistrict={setSelectedDistrict} />}
+      {activeTab === 'map' && (
+        <MapView 
+          selectedDistrict={selectedDistrict} 
+          setSelectedDistrict={setSelectedDistrict} 
+          districts={districts}
+          rawIncidents={rawIncidents} 
+        />
+      )}
       {activeTab === 'routes' && <RoutesView />}
-      {activeTab === 'alerts' && <AlertsView />}
+      {activeTab === 'alerts' && <AlertsView alerts={alerts} />}
 
       <nav className="bottom-nav" aria-label="Main navigation">
         <NavButton active={activeTab === 'home'} label="Overview" icon={<Home size={20} />} onClick={() => setActiveTab('home')} />
@@ -222,8 +234,100 @@ function NavButton({ active, label, icon, onClick }) {
   return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}>{icon}<span>{label}</span></button>;
 }
 
-function MapView({ selectedDistrict, setSelectedDistrict }) {
-  return <div className="page-content map-page"><section className="page-heading"><div><p className="section-kicker">LIVE TERRAIN VIEW</p><h2>Risk map</h2></div><button className="icon-button"><Crosshair size={19} /></button></section><div className="map-surface"><div className="map-grid" /><span className="map-label label-one">PHEK</span><span className="map-label label-two">SHILLONG</span><span className="map-label label-three">AIZAWL</span><div className="map-pin pin-one" /><div className="map-pin pin-two" /><div className="map-pin pin-three" /><div className="map-compass"><Compass size={18} /><small>N</small></div><div className="map-legend"><span><i className="legend-dot high" /> High</span><span><i className="legend-dot moderate" /> Moderate</span><span><i className="legend-dot low" /> Low</span></div></div><div className="map-selection"><p className="section-kicker">SELECTED DISTRICT</p><h3>{selectedDistrict.name}</h3><p>{selectedDistrict.state} · {selectedDistrict.score}/100 risk score</p><div className="progress"><span style={{ width: `${selectedDistrict.score}%` }} /></div><button className="primary-button">Open district details <ArrowRight size={16} /></button></div><div className="district-list map-districts">{districts.map((district) => <button className="district-row" key={district.name} onClick={() => setSelectedDistrict(district)}><span className={`risk-icon ${district.color}`}><AlertTriangle size={17} /></span><span className="district-copy"><strong>{district.name}</strong><small>{district.state}</small></span><span className="district-score"><strong>{district.score}</strong><small>{district.risk}</small></span><ChevronRight size={17} className="chevron" /></button>)}</div></div>;
+function MapView({ selectedDistrict, setSelectedDistrict, districts, rawIncidents }) {
+  const [activePinIncident, setActivePinIncident] = useState(null);
+
+  return (
+    <div className="page-content map-page">
+      <section className="page-heading">
+        <div>
+          <p className="section-kicker">LIVE TERRAIN VIEW</p>
+          <h2>Risk map</h2>
+        </div>
+        <button className="icon-button"><Crosshair size={19} /></button>
+      </section>
+
+      <div className="map-surface">
+        <div className="map-grid" />
+        <span className="map-label label-one">PHEK</span>
+        <span className="map-label label-two">SHILLONG</span>
+        <span className="map-label label-three">AIZAWL</span>
+        <div className="map-pin pin-one" />
+        <div className="map-pin pin-two" />
+        <div className="map-pin pin-three" />
+
+        {/* Live synchronized crowd-sourced pins from backend */}
+        {rawIncidents && rawIncidents.map((inc, idx) => (
+          <div
+            key={inc.id || idx}
+            onClick={() => setActivePinIncident(inc)}
+            style={{
+              position: 'absolute',
+              left: `${35 + ((idx * 23) % 45)}%`,
+              top: `${40 + ((idx * 17) % 35)}%`,
+              cursor: 'pointer',
+              zIndex: 3
+            }}
+          >
+            <div style={{
+              width: '18px',
+              height: '18px',
+              background: '#dc2626',
+              border: '3px solid white',
+              borderRadius: '50%',
+              boxShadow: '0 0 10px rgba(220, 38, 38, 0.8)',
+              animation: 'pulse 1.5s infinite'
+            }} />
+          </div>
+        ))}
+
+        <div className="map-compass"><Compass size={18} /><small>N</small></div>
+        <div className="map-legend">
+          <span><i className="legend-dot high" /> High</span>
+          <span><i className="legend-dot moderate" /> Moderate</span>
+          <span><i className="legend-dot low" /> Low</span>
+          {rawIncidents?.length > 0 && <span style={{ color: '#dc2626', fontWeight: 'bold' }}>• {rawIncidents.length} Live Pins</span>}
+        </div>
+      </div>
+
+      {/* Selected Incident or District Details */}
+      {activePinIncident ? (
+        <div className="map-selection" style={{ background: '#fef2f2', padding: '16px', borderRadius: '16px', border: '1px solid #fecaca', marginTop: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+            <span style={{ fontSize: '10px', background: '#dc2626', color: 'white', padding: '2px 8px', borderRadius: '999px', fontWeight: 'bold' }}>
+              LIVE CROWD HAZARD PIN
+            </span>
+            <button onClick={() => setActivePinIncident(null)} style={{ background: 'none', border: 'none', fontSize: '13px', cursor: 'pointer', color: '#64748b' }}>✕</button>
+          </div>
+          <h3 style={{ margin: '4px 0', fontSize: '14px', color: '#991b1b' }}>{activePinIncident.submitted_by || 'Field Reporter'}</h3>
+          <p style={{ margin: '4px 0 10px', fontSize: '11px', color: '#7f1d1d' }}>{activePinIncident.description}</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#991b1b', borderTop: '1px solid #fee2e2', paddingTop: '8px' }}>
+            <span>📍 {Number(activePinIncident.latitude).toFixed(4)}° N, {Number(activePinIncident.longitude).toFixed(4)}° E</span>
+            <span style={{ color: '#16a34a', fontWeight: 'bold' }}>✓ Synced Across All Devices</span>
+          </div>
+        </div>
+      ) : (
+        <div className="map-selection">
+          <p className="section-kicker">SELECTED DISTRICT</p>
+          <h3>{selectedDistrict.name}</h3>
+          <p>{selectedDistrict.state} · {selectedDistrict.score}/100 risk score</p>
+          <div className="progress"><span style={{ width: `${selectedDistrict.score}%` }} /></div>
+          <button className="primary-button">Open district details <ArrowRight size={16} /></button>
+        </div>
+      )}
+
+      <div className="district-list map-districts">
+        {districts.map((district) => (
+          <button className="district-row" key={district.name} onClick={() => { setSelectedDistrict(district); setActivePinIncident(null); }}>
+            <span className={`risk-icon ${district.color}`}><AlertTriangle size={17} /></span>
+            <span className="district-copy"><strong>{district.name}</strong><small>{district.state}</small></span>
+            <span className="district-score"><strong>{district.score}</strong><small>{district.risk}</small></span>
+            <ChevronRight size={17} className="chevron" />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function RoutesView() {

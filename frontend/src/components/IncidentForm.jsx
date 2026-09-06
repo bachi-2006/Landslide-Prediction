@@ -17,6 +17,7 @@ const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted }) => {
     const [previewUrl, setPreviewUrl] = useState(null);
     const [loading, setLoading] = useState(false);
     const [offlineNotice, setOfflineNotice] = useState(false);
+    const [successNotice, setSuccessNotice] = useState(false);
 
     React.useEffect(() => {
         if ("geolocation" in navigator) {
@@ -92,9 +93,12 @@ const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted }) => {
 
         try {
             await incidentService.submitIncident(data);
-            alert("Incident reported successfully!");
-            onClose();
-            onReportSubmitted?.();
+            setSuccessNotice(true);
+            setTimeout(() => {
+                if (previewUrl) URL.revokeObjectURL(previewUrl);
+                onClose();
+                onReportSubmitted?.();
+            }, 1200);
         } catch (err) {
             // Network fallback: save to offline queue
             console.warn("Upload failed, saving offline fallback:", err);
@@ -109,6 +113,7 @@ const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted }) => {
             });
             setOfflineNotice(true);
             setTimeout(() => {
+                if (previewUrl) URL.revokeObjectURL(previewUrl);
                 onClose();
                 onReportSubmitted?.();
             }, 1800);
@@ -132,7 +137,13 @@ const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted }) => {
                     <button onClick={onClose} className="text-white/80 hover:text-white p-1">✕</button>
                 </div>
 
-                {offlineNotice ? (
+                {successNotice ? (
+                    <div className="p-8 text-center flex flex-col items-center gap-3">
+                        <CheckCircle2 size={48} className="text-emerald-500 animate-bounce" />
+                        <h3 className="font-bold text-slate-800 text-base">Report Submitted Successfully!</h3>
+                        <p className="text-xs text-slate-600 max-w-xs">Your crowd-sourced hazard report and photo evidence have been submitted to the GIS Command Center.</p>
+                    </div>
+                ) : offlineNotice ? (
                     <div className="p-8 text-center flex flex-col items-center gap-3">
                         <CheckCircle2 size={48} className="text-emerald-500" />
                         <h3 className="font-bold text-slate-800 text-base">{t('offline_mode')}</h3>

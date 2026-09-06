@@ -4,6 +4,7 @@ import {
     Smartphone, MessageSquare, AlertTriangle, X, Volume2, Globe, Clock
 } from 'lucide-react';
 import axios from 'axios';
+import { alertService } from '../services/api';
 import { getTranslation } from '../services/i18n';
 
 const AlertsEngine = ({ geoJsonData, onClose, lang = 'en' }) => {
@@ -91,9 +92,8 @@ const AlertsEngine = ({ geoJsonData, onClose, lang = 'en' }) => {
         const districtObj = districts.find(d => d.id === targetDistrict) || districts[0];
 
         try {
-            const apiBase = import.meta.env.VITE_API_URL || '/api';
             const phoneList = customPhones.split(',').map(p => p.trim()).filter(Boolean);
-            const response = await axios.post(`${apiBase}/alert/broadcast`, {
+            const response = await alertService.broadcastAlert({
                 district_id: districtObj.id,
                 level: alertLevel,
                 message: `[${districtObj.name.toUpperCase()}] ${customMessage}`,
@@ -118,10 +118,9 @@ const AlertsEngine = ({ geoJsonData, onClose, lang = 'en' }) => {
                 ...alertHistory
             ]);
         } catch (err) {
-            // Simulated fallback
             setDispatchResult({
-                success: true,
-                message: `Broadcast simulated successfully for ${districtObj.name} (FCM Push & SMS Gateway)!`
+                success: false,
+                message: `Broadcast failed for ${districtObj.name}: ${err?.response?.data?.detail || err.message || 'Check network connection and authority key'}`
             });
             setAlertHistory([
                 {
@@ -130,7 +129,7 @@ const AlertsEngine = ({ geoJsonData, onClose, lang = 'en' }) => {
                     level: alertLevel,
                     channels: [...selectedChannels],
                     time: 'Just now',
-                    status: 'Simulated Broadcast Active'
+                    status: 'Broadcast Failed'
                 },
                 ...alertHistory
             ]);
