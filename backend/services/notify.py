@@ -27,27 +27,69 @@ def _get_firebase_app():
     return firebase_admin.initialize_app(credentials.Certificate(credential_path))
 
 
-async def send_push_notification(tokens: List[str], title: str, body: str) -> bool:
+async def send_push_notification(
+    tokens: List[str],
+    title: str,
+    body: str,
+    extra_data: Optional[dict] = None
+) -> bool:
     """
-    Sends a push notification to a list of device tokens using Firebase FCM.
+    Sends a high-priority push notification to device tokens via Firebase FCM multicast batching.
+    Configured with urgent priority, emergency sound channel, and actionable payload
+    (escape route & precautions) that wakes devices even when the app is in the background or killed.
     """
     if not tokens or _get_firebase_app() is None:
-        logger.error("Firebase configuration missing")
+        logger.error("Firebase configuration missing or no recipient tokens")
         return False
 
-    success = True
-    for token in tokens:
-        try:
-            messaging.send(messaging.Message(
-                token=token,
-                notification=messaging.Notification(title=title, body=body),
-                data={"type": "risk-alert"},
-            ))
-        except Exception as e:
-            logger.error("Failed to send notification: %s", e)
-            success = False
+    unique_tokens = list(set(tokens))
+    all_success = True
 
-    return success
+    payload_data = {"type": "risk-alert", "pitch": "low"}
+    if extra_data:
+        # Convert all extra data values to strings for FCM compatibility
+        for k, v in extra_data.items():
+            payload_data[str(k)] = str(v)
+
+    android_config = messaging.AndroidConfig(
+        priority="high",
+        notification=messaging.AndroidNotification(
+            channel_id="emergency_alerts_low_pitch",
+            sound="emergency_low_pitch",
+            default_vibrate_timings=True,
+            priority="max"
+        ),
+        data=payload_data
+    )
+
+    webpush_config = messaging.WebpushConfig(
+        headers={"Urgency": "high"},
+        notification=messaging.WebpushNotification(
+            require_interaction=True,
+            vibrate=[500, 250, 500, 250, 1000],
+        )
+    )
+
+    # Send in batches of 500 (FCM Multicast limit)
+    for i in range(0, len(unique_tokens), 500):
+        batch = unique_tokens[i:i + 500]
+        try:
+            message = messaging.MulticastMessage(
+                tokens=batch,
+                notification=messaging.Notification(title=title, body=body),
+                data=payload_data,
+                android=android_config,
+                webpush=webpush_config,
+            )
+            response = messaging.send_each_for_multicast(message)
+            logger.info(f"FCM batch sent: {response.success_count}/{len(batch)} delivered")
+            if response.failure_count > 0:
+                all_success = False
+        except Exception as e:
+            logger.error("Failed to send multicast batch: %s", e)
+            all_success = False
+
+    return all_success
 
 
 import httpx

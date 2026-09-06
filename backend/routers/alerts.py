@@ -24,16 +24,21 @@ class BroadcastAlertRequest(BaseModel):
     channels: Optional[List[str]] = ["push", "sms"]
     phone_numbers: Optional[List[str]] = None
 
+import hmac
+
 @router.post("/broadcast")
 async def broadcast_alert(req: BroadcastAlertRequest, authorization: Optional[str] = Header(None)):
     """
     Multi-channel emergency broadcast (FCM push + SMS dispatch).
-    Requires authority authorization token if configured in production.
+    Requires authority authorization token.
     """
-    expected_token = os.getenv("AUTHORITY_BROADCAST_KEY")
-    if expected_token and expected_token != "your_broadcast_key":
-        if not authorization or authorization.replace("Bearer ", "").strip() != expected_token:
-            raise HTTPException(status_code=403, detail="Unauthorized: Emergency broadcast requires valid authority credentials.")
+    expected_token = os.getenv("AUTHORITY_BROADCAST_KEY", "ne-shield-authority-key-2026")
+    token_candidate = authorization.replace("Bearer ", "").strip() if authorization else ""
+    if not token_candidate or not hmac.compare_digest(token_candidate, expected_token):
+        raise HTTPException(
+            status_code=403,
+            detail="Unauthorized: Emergency broadcast requires valid authority credentials in Authorization header."
+        )
     try:
         db = get_supabase()
         results = {}
@@ -46,10 +51,19 @@ async def broadcast_alert(req: BroadcastAlertRequest, authorization: Optional[st
                 all_tokens = db.table("fcm_tokens").select("token").execute()
                 tokens = [row["token"] for row in all_tokens.data] if all_tokens.data else []
 
+            extra_payload = {
+                "district_id": req.district_id,
+                "risk_level": req.level,
+                "escape_route": "NH-206 via Mawphlang (Uphill Safe Corridor)",
+                "precautions_dos": "Evacuate uphill immediately; keep 72h go-bag ready; monitor SDMA broadcast",
+                "precautions_donts": "Do NOT cross active debris/mudflow; do NOT seek shelter under steep slopes",
+                "sound_pitch": "low"
+            }
             push_sent = await send_push_notification(
                 tokens=tokens,
-                title=f"NE-SHIELD {req.level} Alert",
-                body=req.message
+                title=f"🚨 NE-SHIELD {req.level} Alert",
+                body=f"{req.message} Evacuate via NH-206 Mawphlang safe corridor.",
+                extra_data=extra_payload
             ) if tokens else False
             results["push"] = {"success": push_sent, "tokens_count": len(tokens)}
 
@@ -113,3 +127,21 @@ async def test_alert(req: AlertTestRequest):
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         return {"success": False, "data": None, "error": str(e)}
+
+current_alert_state = {"is_active": False, "message": ""}
+
+class HardwareTriggerRequest(BaseModel):
+    active: bool
+    message: Optional[str] = "Disaster Simulated!"
+
+@router.post("/hardware/trigger")
+async def trigger_hardware_siren(req: HardwareTriggerRequest):
+    """NE-SHIELD dashboard calls this when you run a simulation."""
+    global current_alert_state
+    current_alert_state = {"is_active": req.active, "message": req.message}
+    return {"status": "success"}
+
+@router.get("/hardware/status")
+async def get_hardware_status():
+    """The ESP32 constantly polls this endpoint."""
+    return current_alert_state

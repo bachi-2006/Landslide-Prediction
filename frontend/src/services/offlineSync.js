@@ -1,35 +1,99 @@
 import { incidentService } from './api';
 
-const OFFLINE_KEY = 'ne_shield_offline_reports_v1';
+const DB_NAME = 'ne_shield_db_v1';
+const STORE_NAME = 'offline_reports';
+const DB_VERSION = 1;
 
-export const getOfflineIncidents = () => {
+const openDatabase = () => {
+    return new Promise((resolve, reject) => {
+        if (!('indexedDB' in window)) {
+            resolve(null);
+            return;
+        }
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+            }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+};
+
+export const getOfflineIncidents = async () => {
     try {
-        const stored = localStorage.getItem(OFFLINE_KEY);
-        return stored ? JSON.parse(stored) : [];
+        const db = await openDatabase();
+        if (!db) {
+            const raw = localStorage.getItem('ne_shield_offline_reports_v1');
+            return raw ? JSON.parse(raw) : [];
+        }
+        return new Promise((resolve) => {
+            const tx = db.transaction(STORE_NAME, 'readonly');
+            const store = tx.objectStore(STORE_NAME);
+            const req = store.getAll();
+            req.onsuccess = () => resolve(req.result || []);
+            req.onerror = () => resolve([]);
+        });
     } catch {
         return [];
     }
 };
 
-export const saveOfflineIncident = (incident) => {
-    const reports = getOfflineIncidents();
-    reports.push({
+export const saveOfflineIncident = async (incident) => {
+    const record = {
         ...incident,
-        id: 'offline_' + Date.now(),
+        id: 'offline_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
         timestamp: new Date().toISOString()
-    });
-    localStorage.setItem(OFFLINE_KEY, JSON.stringify(reports));
+    };
+    try {
+        const db = await openDatabase();
+        if (!db) {
+            const cur = JSON.parse(localStorage.getItem('ne_shield_offline_reports_v1') || '[]');
+            cur.push(record);
+            localStorage.setItem('ne_shield_offline_reports_v1', JSON.stringify(cur));
+            return;
+        }
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put(record);
+    } catch (err) {
+        console.warn("Failed to persist offline incident to IndexedDB", err);
+    }
 };
 
-export const clearOfflineIncidents = () => {
-    localStorage.removeItem(OFFLINE_KEY);
+export const clearOfflineIncidents = async () => {
+    try {
+        const db = await openDatabase();
+        if (!db) {
+            localStorage.removeItem('ne_shield_offline_reports_v1');
+            return;
+        }
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).clear();
+    } catch (err) {
+        console.warn("Failed to clear IndexedDB reports", err);
+    }
+};
+
+export const deleteOfflineIncident = async (id) => {
+    try {
+        const db = await openDatabase();
+        if (db) {
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            tx.objectStore(STORE_NAME).delete(id);
+        }
+    } catch (err) {
+        console.warn("Failed to delete synced report from IndexedDB", err);
+    }
 };
 
 export const dataURItoBlob = (dataURI) => {
     if (!dataURI) return null;
     try {
-        const byteString = atob(dataURI.split(',')[1]);
-        const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+        const parts = dataURI.split(',');
+        const byteString = atob(parts[1]);
+        const mimeString = parts[0].split(':')[1].split(';')[0];
         const ab = new ArrayBuffer(byteString.length);
         const ia = new Uint8Array(ab);
         for (let i = 0; i < byteString.length; i++) {
@@ -42,11 +106,10 @@ export const dataURItoBlob = (dataURI) => {
 };
 
 export const syncOfflineIncidents = async () => {
-    const reports = getOfflineIncidents();
+    const reports = await getOfflineIncidents();
     if (!reports.length) return 0;
 
     let syncedCount = 0;
-    const remaining = [];
 
     for (const report of reports) {
         try {
@@ -64,24 +127,18 @@ export const syncOfflineIncidents = async () => {
             }
 
             await incidentService.submitIncident(data);
+            await deleteOfflineIncident(report.id);
             syncedCount++;
         } catch (e) {
-            console.error('Failed to sync offline report', report, e);
-            remaining.push(report);
+            console.error('Failed to sync offline report, will retry later:', report.id, e);
         }
-    }
-
-    if (remaining.length > 0) {
-        localStorage.setItem(OFFLINE_KEY, JSON.stringify(remaining));
-    } else {
-        clearOfflineIncidents();
     }
 
     return syncedCount;
 };
 
 export const initOfflineSync = (onSuccess) => {
-    const handleOnline = async () => {
+    const triggerSync = async () => {
         if (navigator.onLine) {
             const count = await syncOfflineIncidents();
             if (count > 0 && onSuccess) {
@@ -90,6 +147,9 @@ export const initOfflineSync = (onSuccess) => {
         }
     };
 
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
+    // Check pending uploads immediately on launch if online
+    triggerSync();
+
+    window.addEventListener('online', triggerSync);
+    return () => window.removeEventListener('online', triggerSync);
 };

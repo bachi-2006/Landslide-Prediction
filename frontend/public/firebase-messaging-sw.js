@@ -19,4 +19,15 @@ if (apiKey && projectId && appId) {
   });
 
   const messaging = firebase.messaging();
+
+  messaging.onBackgroundMessage((payload) => {
+    const title = payload.notification?.title || "NE-SHIELD Landslide Alert";
+    const options = {
+      body: payload.notification?.body || "Severe hazard status detected in your sector.",
+      icon: "/vite.svg",
+      badge: "/vite.svg",
+      data: payload.data || {}
+    };
+    self.registration.showNotification(title, options);
+  });
 }
