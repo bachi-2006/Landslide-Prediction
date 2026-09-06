@@ -91,9 +91,12 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded }) => {
         };
         loadMapData();
         const unsubscribe = subscribeToMapUpdates(loadMapData);
+        // Poll every 6 seconds so mobile reports appear instantly on desktop
+        const pollTimer = setInterval(loadMapData, 6000);
         return () => {
             active = false;
             unsubscribe();
+            clearInterval(pollTimer);
         };
     }, [refreshKey]);
 
@@ -140,6 +143,7 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded }) => {
                 zoom={7}
                 style={{ height: '100%', width: '100%' }}
                 zoomControl={false}
+                preferCanvas={true}
             >
                 <TileLayer
                     key={activeBasemap}
@@ -148,8 +152,9 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded }) => {
                 />
 
                 {error && (
-                    <div className="absolute left-4 bottom-4 z-[1000] max-w-sm rounded-xl bg-white/95 backdrop-blur px-4 py-3 text-xs text-slate-700 shadow-xl border border-slate-200">
-                        {error}
+                    <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000] max-w-sm rounded-xl bg-red-50/95 backdrop-blur px-4 py-3 text-xs text-red-800 shadow-xl border border-red-200 flex items-center gap-2">
+                        <span>{error}</span>
+                        <button onClick={() => setError(null)} className="font-bold text-red-600 hover:text-red-900 ml-auto">✕</button>
                     </div>
                 )}
 

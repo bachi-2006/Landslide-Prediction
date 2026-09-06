@@ -16,7 +16,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import os
+import logging
 from dotenv import load_dotenv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("backend")
 
 from backend.routers import risk, incidents, routes, alerts, devices
 
@@ -67,12 +71,15 @@ async def scheduled_risk_monitoring_cycle():
     import logging
     logger = logging.getLogger("scheduler")
     logger.info("[SCHEDULER] Initiating automated regional landslide risk surveillance cycle...")
-    for dist in MONITORED_SENTINEL_DISTRICTS:
+    import asyncio
+    async def update_one(dist):
         try:
             await refresh_district_risk(dist["id"], dist["name"], dist["lat"], dist["lon"])
             logger.info(f"[SCHEDULER] Updated risk telemetry for {dist['name']}")
         except Exception as e:
             logger.warning(f"[SCHEDULER] Periodic refresh for {dist['name']} skipped: {e}")
+
+    await asyncio.gather(*(update_one(d) for d in MONITORED_SENTINEL_DISTRICTS), return_exceptions=True)
 
 @app.on_event("startup")
 async def start_background_monitoring():

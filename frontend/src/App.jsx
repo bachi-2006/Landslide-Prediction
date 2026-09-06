@@ -7,7 +7,7 @@ import LandingPage from './components/LandingPage';
 import DisasterSimulator from './components/DisasterSimulator';
 import AlertsEngine from './components/AlertsEngine';
 import { AlertTriangle, PlusCircle, ShieldAlert, Globe, WifiOff, CheckCircle2, Home, CloudLightning, Radio } from 'lucide-react';
-import { requestNotificationPermission } from './services/firebase';
+import { requestNotificationPermission, onNotificationReceived } from './services/firebase';
 import { languages, getTranslation } from './services/i18n';
 import { initOfflineSync } from './services/offlineSync';
 
@@ -33,6 +33,15 @@ const App = () => {
         // Initialize Firebase notifications on load
         requestNotificationPermission().then(token => {
             if (token) console.log("FCM Token registered:", token);
+        });
+
+        // Listen for foreground push notifications
+        onNotificationReceived((payload) => {
+            const title = payload?.notification?.title || 'Emergency Landslide Alert';
+            const body = payload?.notification?.body || 'Hazard status updated.';
+            setSyncToast(`🚨 ${title}: ${body}`);
+            setRiskRefreshKey(k => k + 1);
+            setTimeout(() => setSyncToast(null), 6000);
         });
 
         // Network status listeners

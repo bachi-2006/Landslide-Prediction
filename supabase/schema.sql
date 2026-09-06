@@ -29,6 +29,10 @@ where source_key is null;
 alter table public.historical_landslides drop constraint if exists historical_landslides_slide_no_key;
 create unique index if not exists historical_landslides_source_key_key
     on public.historical_landslides (source_key);
+create index if not exists idx_historical_landslides_coords
+    on public.historical_landslides (latitude, longitude);
+create index if not exists idx_incidents_created_at
+    on public.incidents (created_at desc);
 
 create table if not exists public.incidents (
     id uuid primary key default uuid_generate_v4(),

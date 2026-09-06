@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertTriangle, RefreshCw, TrendingUp, Navigation, CloudRain, Droplets, Mountain, Compass, ShieldCheck, PhoneCall } from 'lucide-react';
+import { AlertTriangle, RefreshCw, TrendingUp, Navigation, CloudRain, Droplets, Mountain, Compass, ShieldCheck, PhoneCall, ShieldAlert, CheckCircle2, AlertOctagon } from 'lucide-react';
 import { riskService, routeService } from '../services/api';
 import { getTranslation } from '../services/i18n';
 
@@ -59,17 +59,16 @@ const DistrictPanel = ({ district, onClose, onRouteGenerated, onRiskUpdated, lan
     const handleGetRoute = async () => {
         setLoading(true);
         try {
+            // Safe relief corridor calculation from regional transport hub (Guwahati Hub or User GPS)
             const payload = {
-                origin_lat: 26.1, origin_lon: 91.7, // Guwahati Hub
+                origin_lat: 26.1, origin_lon: 91.7, // Regional Transit Hub
                 dest_lat: centroid.lat, dest_lon: centroid.lon,
-                avoid_district_id: props.id,
-                avoid_lat: centroid.lat,
-                avoid_lon: centroid.lon
+                avoid_district_id: props.id
             };
             const res = await routeService.getSafeRoute(payload);
             onRouteGenerated?.(res.data.data);
         } catch (e) {
-            setError('Routing failed. Verify ORS service.');
+            setError('Routing failed or routing service unavailable.');
         } finally {
             setLoading(false);
         }
@@ -82,7 +81,34 @@ const DistrictPanel = ({ district, onClose, onRouteGenerated, onRiskUpdated, lan
         'Critical': 'bg-red-100 text-red-800 border-red-200',
     };
 
-    if (!data) return <div className="w-96 h-full bg-white p-6 text-sm text-slate-600">{error || 'Loading district risk data...'}</div>;
+    if (!data) {
+        return (
+            <div className="w-full sm:w-96 h-full bg-white p-6 text-sm text-slate-600 shadow-xl border-l border-slate-200 flex flex-col justify-between">
+                <div>
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-xl font-bold text-slate-800">{name}</h2>
+                        <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1" aria-label="Close district panel">✕</button>
+                    </div>
+                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-slate-600">
+                        {error ? (
+                            <div className="text-red-600 font-medium">{error}</div>
+                        ) : (
+                            <div className="flex items-center gap-2">
+                                <RefreshCw size={16} className="animate-spin text-blue-600" />
+                                <span>Loading district risk data...</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+                <button
+                    onClick={onClose}
+                    className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold text-xs"
+                >
+                    Close Panel
+                </button>
+            </div>
+        );
+    }
 
     const factors = Object.entries(data.factors_json || {}).filter(([k]) => !k.startsWith('_'));
     const telemetry = data.factors_json?._telemetry || null;
@@ -165,6 +191,77 @@ const DistrictPanel = ({ district, onClose, onRouteGenerated, onRiskUpdated, lan
                     </div>
                 </div>
             )}
+
+            {/* Disaster Precautions & Safety Advisory (NDMA Standard) */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                        <ShieldAlert size={15} className={data.risk_level === 'Critical' ? 'text-red-600' : 'text-amber-600'} />
+                        NDMA Safety Guidelines
+                    </h3>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        data.risk_level === 'Critical' ? 'bg-red-100 text-red-700' :
+                        data.risk_level === 'High' ? 'bg-orange-100 text-orange-700' :
+                        'bg-blue-100 text-blue-700'
+                    }`}>
+                        {data.risk_level} Protocol
+                    </span>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                    {/* DO's */}
+                    <div className="bg-emerald-50/90 border border-emerald-200 rounded-lg p-2.5">
+                        <p className="font-bold text-emerald-800 flex items-center gap-1 mb-1">
+                            <CheckCircle2 size={13} className="text-emerald-600" /> DO'S:
+                        </p>
+                        <ul className="list-disc list-inside text-emerald-900 space-y-1 leading-relaxed text-[11px]">
+                            {data.risk_level === 'Critical' ? (
+                                <>
+                                    <li><strong>Evacuate immediately</strong> along the marked safe uphill route.</li>
+                                    <li>Keep emergency go-bag ready (torch, water, IDs, first-aid).</li>
+                                    <li>Stay tuned to local SDMA radio/FCM emergency broadcasts.</li>
+                                </>
+                            ) : data.risk_level === 'High' ? (
+                                <>
+                                    <li>Inspect hillside slope retaining walls for new tension cracks.</li>
+                                    <li>Identify community safe high-ground relief centers.</li>
+                                    <li>Charge communication devices and avoid mountain highways.</li>
+                                </>
+                            ) : (
+                                <>
+                                    <li>Keep perimeter drainage channels and roof gutters clear.</li>
+                                    <li>Check regional weather advisories before travelling.</li>
+                                </>
+                            )}
+                        </ul>
+                    </div>
+
+                    {/* DONT'S */}
+                    <div className="bg-rose-50/90 border border-rose-200 rounded-lg p-2.5">
+                        <p className="font-bold text-rose-800 flex items-center gap-1 mb-1">
+                            <AlertOctagon size={13} className="text-rose-600" /> DON'TS:
+                        </p>
+                        <ul className="list-disc list-inside text-rose-900 space-y-1 leading-relaxed text-[11px]">
+                            {data.risk_level === 'Critical' ? (
+                                <>
+                                    <li><strong>Do NOT cross active debris or mudflow paths</strong> by foot or vehicle.</li>
+                                    <li>Do NOT delay evacuation to pack heavy household assets.</li>
+                                    <li>Do NOT re-enter damaged buildings until certified safe.</li>
+                                </>
+                            ) : data.risk_level === 'High' ? (
+                                <>
+                                    <li>Do NOT drive through steep road cuts during continuous heavy downpours.</li>
+                                    <li>Do NOT construct makeshift retaining walls during rain.</li>
+                                </>
+                            ) : (
+                                <>
+                                    <li>Do NOT dump construction debris or soil into natural hill nullahs.</li>
+                                </>
+                            )}
+                        </ul>
+                    </div>
+                </div>
+            </div>
 
             {/* Contributing Factors */}
             <div>
