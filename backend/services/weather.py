@@ -5,9 +5,11 @@ Fetches live weather data from Open-Meteo API.
 
 import httpx
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import TypedDict, Optional
 import logging
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -52,7 +54,7 @@ async def fetch_weather(lat: float, lon: float) -> Optional[WeatherData]:
 
                 # Find the index corresponding to the current hour (Asia/Kolkata)
                 # This ensures we measure observed trailing rainfall, not future forecast rain
-                now_str = datetime.now().strftime("%Y-%m-%dT%H:00")
+                now_str = datetime.now(IST).strftime("%Y-%m-%dT%H:00")
                 matching_indices = [i for i, t in enumerate(times) if t <= now_str]
                 current_idx = matching_indices[-1] if matching_indices else min(72, len(times) - 1)
 

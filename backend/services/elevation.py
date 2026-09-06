@@ -48,6 +48,13 @@ async def fetch_elevation_and_slope(lat: float, lon: float) -> Optional[Elevatio
                 if not elevations:
                     return None
 
+                center_elev = elevations[0]
+                if len(elevations) < 2:
+                    return {
+                        "elevation": round(center_elev, 1),
+                        "slope": 0.0
+                    }
+
                 # Slope Calculation: Angle in degrees
                 # Slope angle = arctan(elevation_rise / horizontal_run)
                 # Approximate horizontal offset is ~111 meters
