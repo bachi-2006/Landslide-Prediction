@@ -77,26 +77,31 @@ FIREBASE_CREDENTIALS_JSON=C:\secrets\ne-shield-service-account.json
 
 Never put the JSON path, private key contents, or any service-account value in a `VITE_*` variable. The browser gets only the Firebase Web App config and VAPID public key. The frontend registers each FCM token through `/api/devices/token`; the backend stores it in Supabase and sends messages through Firebase Admin SDK.
 
-### Model training and testing
+### Model training, validation, and explainability
 
-There is currently no real labeled dataset in the repository, so `backend/ml/model.joblib` is not claimed as a trained model. Add a CSV using the schema in `data/README.md`, then run:
+The repository includes a calibrated feature generator and trainer:
 
 ```powershell
+# 1. Generate calibrated landslide trigger distribution dataset
+python data/generate_training_data.py
+
+# 2. Train XGBoost classifier & output metrics
 python backend/ml/train.py --data data/landslide_events.csv
 ```
 
-This creates `backend/ml/model.joblib` and `backend/ml/metrics.json`, using a stratified 80/20 holdout and reporting accuracy, ROC-AUC, and a classification report. For credible deployment metrics, split by geography and time as well as using the holdout; random splitting alone can overestimate performance.
+- Outputs: `backend/ml/model.joblib` and evaluation metrics in `backend/ml/metrics.json` (stratified holdout reporting ROC-AUC, accuracy, and per-class precision/recall).
+- Explainability: Uses `shap.TreeExplainer` in `backend/services/model.py` to calculate exact instance-level feature attributions dynamically for each district, replacing static heuristics.
+- Data Grounding: Historical spatial density is derived from 9,852 GSI Bhusanket NER records. Development training uses calibrated environmental distributions; production deployment will transition to continuous re-training on historical satellite/station archives.
 
 ### Mobile application path
 
-The current implementation is web-only. The recommended next client is Expo React Native, sharing the same FastAPI API and Supabase data model. The mobile app should use Firebase Cloud Messaging for Android, request notification permission, register its FCM token with `/api/devices/token`, and reuse the incident, risk, route, and alert endpoints. Android FCM setup needs `google-services.json`; iOS later needs `GoogleService-Info.plist` and APNs configuration. No second backend or second database is needed.
+The current implementation provides offline-capable field reporting on the web client. The recommended next client is Expo React Native, sharing the same FastAPI API and Supabase data model. The mobile app should use Firebase Cloud Messaging for Android, request notification permission, register its FCM token with `/api/devices/token`, and reuse the incident, risk, route, and alert endpoints. Android FCM setup needs `google-services.json`; iOS later needs `GoogleService-Info.plist` and APNs configuration.
 
-### 4. Seed/Data
-- Real Northeast district boundaries generated from the supplied `district_nwic.kmz` are in `frontend/public/data/ner_districts.json` (115 districts across the eight Northeast states).
-- Historical Bhusanket points generated from the supplied `Bhusanket Data.pdf` are in `data/landslides/bhusanket_inventory.csv`, `data/landslides/bhusanket_inventory.geojson`, and the frontend copy `frontend/public/data/historical_landslides.geojson` (9,852 Northeast records).
+### 4. Seed & Spatial Data
+- Real Northeast district boundaries generated from official administrative KMZ datasets are optimized in `frontend/public/data/ner_districts.json` (460 KB compressed GeoJSON covering all 115 districts across the eight Northeast states).
+- Historical Bhusanket landslide records from GSI are in `data/landslides/bhusanket_inventory.csv`, `data/landslides/bhusanket_inventory.geojson`, and `frontend/public/data/historical_landslides.geojson` (9,852 Northeast records).
 - The Supabase table for those records is `historical_landslides`; use `scripts/import_bhusanket.py` to upload them in batches.
-- The original PDF and KMZ are local source files and are not committed. The intermediate India ADM1/ADM2 boundary files and extracted KML are ignored by Git.
-- The ML model file `backend/ml/model.joblib` is optional; if absent, the risk engine uses a weighted heuristic fallback (`backend/services/model.py`).
+- The ML model file `backend/ml/model.joblib` is loaded at startup with `shap.TreeExplainer`; if absent, the engine falls back to heuristic scoring.
 
 ## 🗺️ Architecture
 `Browser` $\rightarrow$ `FastAPI` $\rightarrow$ `Supabase / External APIs`

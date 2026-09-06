@@ -4,7 +4,7 @@ Handles triggering and recording system alerts.
 """
 
 import os
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional, List
 from backend.db.supabase_client import SupabaseNotConfiguredError, get_supabase
@@ -25,10 +25,15 @@ class BroadcastAlertRequest(BaseModel):
     phone_numbers: Optional[List[str]] = None
 
 @router.post("/broadcast")
-async def broadcast_alert(req: BroadcastAlertRequest):
+async def broadcast_alert(req: BroadcastAlertRequest, authorization: Optional[str] = Header(None)):
     """
     Multi-channel emergency broadcast (FCM push + SMS dispatch).
+    Requires authority authorization token if configured in production.
     """
+    expected_token = os.getenv("AUTHORITY_BROADCAST_KEY")
+    if expected_token and expected_token != "your_broadcast_key":
+        if not authorization or authorization.replace("Bearer ", "").strip() != expected_token:
+            raise HTTPException(status_code=403, detail="Unauthorized: Emergency broadcast requires valid authority credentials.")
     try:
         db = get_supabase()
         results = {}

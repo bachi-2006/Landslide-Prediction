@@ -23,16 +23,17 @@ def generate_events():
         rain_3h = round(min(rain_24h * random.uniform(0.2, 0.6), random.uniform(20.0, 95.0)), 1)
         rain_1h = round(min(rain_3h * random.uniform(0.3, 0.8), random.uniform(10.0, 50.0)), 1)
         
-        soil_moisture = round(random.uniform(55.0, 98.0), 1)
+        # Volumetric soil moisture (0.38 - 0.58 m³/m³ represents near-saturation / liquefaction point)
+        soil_moisture = round(random.uniform(0.38, 0.58), 3)
         elevation = round(random.uniform(350.0, 3200.0), 1)
         slope = round(random.uniform(18.0, 58.0), 1)
         
         hist_count = random.randint(1, 25)
-        hist_fatalities = random.choices([0, 1, 2, 4, 6], weights=[0.6, 0.22, 0.11, 0.05, 0.02])[0]
+        hist_fatalities = random.choices([0, 1, 2], weights=[0.85, 0.10, 0.05])[0]
 
-        # 5% edge cases / noise: human intervention, rock cutting or drainage prevents slide or slight sensor variance
+        # 6% edge cases / noise
         label = 1
-        if random.random() < 0.05:
+        if random.random() < 0.06:
             label = 0
 
         events.append({
@@ -53,7 +54,7 @@ def generate_events():
         rain_24h = round(random.uniform(0.0, 30.0), 1)
         rain_3h = round(rain_24h * random.uniform(0.0, 0.4), 1)
         rain_1h = round(rain_3h * random.uniform(0.0, 0.5), 1)
-        soil_moisture = round(random.uniform(15.0, 50.0), 1)
+        soil_moisture = round(random.uniform(0.12, 0.32), 3)
         elevation = round(random.uniform(50.0, 300.0), 1)
         slope = round(random.uniform(0.5, 12.0), 1)
         hist_count = 0
@@ -76,14 +77,14 @@ def generate_events():
         rain_24h = round(random.uniform(20.0, 75.0), 1)
         rain_3h = round(rain_24h * random.uniform(0.1, 0.45), 1)
         rain_1h = round(rain_3h * random.uniform(0.1, 0.5), 1)
-        soil_moisture = round(random.uniform(20.0, 62.0), 1)
+        soil_moisture = round(random.uniform(0.18, 0.36), 3)
         elevation = round(random.uniform(600.0, 2400.0), 1)
         slope = round(random.uniform(20.0, 42.0), 1)
         hist_count = random.randint(0, 4)
         hist_fatalities = 0
 
         # Boundary edge cases where minor slumps occur even at lower thresholds
-        label = 1 if (slope > 36 and soil_moisture > 58 and random.random() < 0.08) else 0
+        label = 1 if (slope > 36 and soil_moisture > 0.34 and random.random() < 0.08) else 0
 
         events.append({
             "rain_1h": rain_1h,
@@ -102,7 +103,7 @@ def generate_events():
         rain_24h = round(random.uniform(85.0, 210.0), 1)
         rain_3h = round(rain_24h * random.uniform(0.25, 0.55), 1)
         rain_1h = round(rain_3h * random.uniform(0.25, 0.6), 1)
-        soil_moisture = round(random.uniform(65.0, 95.0), 1)
+        soil_moisture = round(random.uniform(0.40, 0.56), 3)
         elevation = round(random.uniform(40.0, 350.0), 1)
         slope = round(random.uniform(1.0, 14.0), 1)
         hist_count = random.randint(0, 2)

@@ -5,6 +5,7 @@ Fetches live weather data from Open-Meteo API.
 
 import httpx
 import asyncio
+from datetime import datetime
 from typing import TypedDict, Optional
 import logging
 
@@ -43,20 +44,34 @@ async def fetch_weather(lat: float, lon: float) -> Optional[WeatherData]:
                 hourly = data.get("hourly", {})
                 rain = hourly.get("rain", [])
                 soil = hourly.get("soil_moisture_0_to_1cm", [])
+                times = hourly.get("time", [])
 
-                if not rain or not soil:
+                if not rain or not soil or not times:
                     logger.warning(f"Incomplete data received for {lat}, {lon}")
                     return None
 
-                # Simple aggregation for MVP:
-                # rain_1h: latest hour
-                # rain_3h: sum of last 3 hours
-                # rain_24h: sum of last 24 hours
+                # Find the index corresponding to the current hour (Asia/Kolkata)
+                # This ensures we measure observed trailing rainfall, not future forecast rain
+                now_str = datetime.now().strftime("%Y-%m-%dT%H:00")
+                matching_indices = [i for i, t in enumerate(times) if t <= now_str]
+                current_idx = matching_indices[-1] if matching_indices else min(72, len(times) - 1)
+
+                # Observed rainfall:
+                # rain_1h: current observed hour
+                # rain_3h: sum of trailing 3 hours up to current
+                # rain_24h: sum of trailing 24 hours up to current
+                rain_1h = float(rain[current_idx]) if current_idx < len(rain) else 0.0
+                start_3h = max(0, current_idx - 2)
+                rain_3h = float(sum(rain[start_3h:current_idx + 1]))
+                start_24h = max(0, current_idx - 23)
+                rain_24h = float(sum(rain[start_24h:current_idx + 1]))
+                soil_m = float(soil[current_idx]) if current_idx < len(soil) else 0.0
+
                 return {
-                    "rain_1h": rain[-1] if rain else 0.0,
-                    "rain_3h": sum(rain[-3:]) if len(rain) >= 3 else sum(rain),
-                    "rain_24h": sum(rain[-24:]) if len(rain) >= 24 else sum(rain),
-                    "soil_moisture": soil[-1] if soil else 0.0
+                    "rain_1h": round(rain_1h, 1),
+                    "rain_3h": round(rain_3h, 1),
+                    "rain_24h": round(rain_24h, 1),
+                    "soil_moisture": round(soil_m, 3)
                 }
 
         except (httpx.HTTPStatusError, httpx.RequestError) as e:

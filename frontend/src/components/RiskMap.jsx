@@ -127,9 +127,11 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded }) => {
 
     const criticalCount = risks.filter(r => r.risk_level === 'Critical').length;
     const highCount = risks.filter(r => r.risk_level === 'High').length;
-    const corridorStatus = criticalCount > 0 
-        ? (100 - (criticalCount * 3.5)).toFixed(1) + '%' 
-        : '100% Clear';
+    const monitoredDistrictsCount = risks.length || (geoJsonData?.features?.length || 115);
+    const sectorsAtRisk = criticalCount + highCount;
+    const sectorsStatusText = sectorsAtRisk > 0
+        ? `${sectorsAtRisk} / ${monitoredDistrictsCount} Vulnerable`
+        : 'All 115 Clear';
 
     return (
         <div className="relative w-full h-full">
@@ -333,12 +335,12 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded }) => {
                         </div>
                     </div>
 
-                    {/* Corridors Open */}
+                    {/* Sectors Monitored Status */}
                     <div className="flex items-center gap-2 pr-3 border-r border-slate-800">
                         <Navigation size={14} className="text-blue-400" />
                         <div>
-                            <span className="text-[10px] text-slate-400 block uppercase font-bold tracking-wider leading-none">Corridors Open</span>
-                            <span className="font-bold text-white text-xs">{corridorStatus}</span>
+                            <span className="text-[10px] text-slate-400 block uppercase font-bold tracking-wider leading-none">Sector Hazard</span>
+                            <span className="font-bold text-white text-xs">{sectorsStatusText}</span>
                         </div>
                     </div>
 

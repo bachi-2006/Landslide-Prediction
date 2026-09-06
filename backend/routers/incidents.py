@@ -35,14 +35,20 @@ async def create_incident(
     submitted_by: str = Form(...),
     photo: UploadFile | None = File(None)
 ):
-    """
-    Creates a new incident report and uploads the photo to Supabase Storage.
-    """
+    # Input bounds validation for geospatial coordinates
+    if not (-90.0 <= latitude <= 90.0) or not (-180.0 <= longitude <= 180.0):
+        raise HTTPException(status_code=400, detail="Invalid GPS coordinates. Latitude must be [-90, 90] and Longitude [-180, 180].")
+
+    if len(description.strip()) < 3:
+        raise HTTPException(status_code=400, detail="Incident description must be at least 3 characters long.")
+
     try:
         # 1. Upload Photo to Supabase Storage
         photo_url = None
         if photo:
             file_ext = (photo.filename or "image.jpg").split(".")[-1].lower()
+            if file_ext not in ["jpg", "jpeg", "png", "webp"]:
+                raise HTTPException(status_code=400, detail="Unsupported photo format. Allowed formats: JPG, PNG, WEBP.")
             file_path = f"incidents/{uuid.uuid4()}.{file_ext}"
             content = await photo.read()
             db = get_supabase()
