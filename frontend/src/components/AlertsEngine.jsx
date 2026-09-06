@@ -18,7 +18,7 @@ const AlertsEngine = ({ geoJsonData, onClose, lang = 'en' }) => {
     const [alertLevel, setAlertLevel] = useState('Critical');
     const [alertLang, setAlertLang] = useState('en');
     const [selectedChannels, setSelectedChannels] = useState(['push', 'sms']);
-    const [customPhones, setCustomPhones] = useState('+91 7416717797, +91 6305985313');
+    const [customPhones, setCustomPhones] = useState('');
     const [isDispatching, setIsDispatching] = useState(false);
     const [dispatchResult, setDispatchResult] = useState(null);
 

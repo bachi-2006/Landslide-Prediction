@@ -5,6 +5,7 @@ Handles risk scoring and explainability (SHAP-like factors).
 
 import joblib
 import numpy as np
+import shap
 from typing import TypedDict, Dict, Any
 import os
 import logging
@@ -20,18 +21,20 @@ class PredictionResult(TypedDict):
 # Path to the trained model
 MODEL_PATH = "backend/ml/model.joblib"
 model = None
+explainer = None
 
 def load_model():
-    """Loads the XGBoost model from disk."""
-    global model
+    """Loads the XGBoost model and initializes SHAP TreeExplainer."""
+    global model, explainer
     if os.path.exists(MODEL_PATH):
         try:
             model = joblib.load(MODEL_PATH)
-            logger.info("ML model loaded successfully.")
+            explainer = shap.TreeExplainer(model)
+            logger.info("ML model and SHAP TreeExplainer loaded successfully.")
         except Exception as e:
-            logger.error(f"Error loading model: {e}. Falling back to mock model.")
+            logger.error(f"Error loading model or SHAP explainer: {e}. Falling back to mock model.")
     else:
-        logger.warning("model.joblib not found. Using mock prediction logic for MVP.")
+        logger.warning("model.joblib not found. Using heuristic prediction logic.")
 
 def get_risk_level(score: float) -> str:
     """Buckets risk score into levels."""
@@ -63,15 +66,39 @@ def predict(features: Dict[str, Any]) -> PredictionResult:
         ]])
         score = float(model.predict_proba(feat_array)[0][1])
 
-        # Mock SHAP factors for now if SHAP library is not integrated
-        # In production, use shap.TreeExplainer(model).shap_values(feat_array)
-        factors = {
-            "heavy rainfall": 0.6,
-            "steep slope": 0.3,
-            "historical events": 0.1
-        }
+        # Dynamic SHAP feature attribution
+        try:
+            shap_vals = explainer.shap_values(feat_array)[0]
+            feature_display_names = [
+                "Heavy Rainfall (1h)",
+                "Antecedent Rain (3h)",
+                "Cumulative Rain (24h)",
+                "Soil Moisture Saturation",
+                "High Elevation",
+                "Steep Terrain Slope",
+                "Historical Slide Frequency",
+                "Past Fatalities Severity"
+            ]
+            pos_impacts = {feature_display_names[i]: max(float(shap_vals[i]), 0.0) for i in range(len(feature_display_names))}
+            total_pos = sum(pos_impacts.values())
+            if total_pos > 0:
+                pcts = {k: round((v / total_pos) * 100, 1) for k, v in pos_impacts.items()}
+            else:
+                abs_impacts = {feature_display_names[i]: abs(float(shap_vals[i])) for i in range(len(feature_display_names))}
+                total_abs = sum(abs_impacts.values()) or 1.0
+                pcts = {k: round((v / total_abs) * 100, 1) for k, v in abs_impacts.items()}
+            
+            # Keep top 4 contributing factors
+            factors = dict(sorted(pcts.items(), key=lambda x: x[1], reverse=True)[:4])
+        except Exception as e:
+            logger.warning(f"SHAP explanation computation failed: {e}. Falling back to baseline factors.")
+            factors = {
+                "Rainfall Trigger": 55.0,
+                "Terrain Slope": 30.0,
+                "Soil Saturation": 15.0
+            }
     else:
-        # Mock Heuristic Logic:
+        # Heuristic Logic fallback:
         # Risk = (Rain * 0.5) + (Slope * 0.3) + (Hist * 0.2)
         rain_impact = min(features.get("rain_24h", 0) / 100.0, 1.0) * 0.5
         slope_impact = min(features.get("slope", 0) / 45.0, 1.0) * 0.3
@@ -79,15 +106,13 @@ def predict(features: Dict[str, Any]) -> PredictionResult:
 
         score = rain_impact + slope_impact + hist_impact
 
-        # Generate mock factors based on which had most impact
         factors = {
-            "rainfall": rain_impact,
-            "slope": slope_impact,
-            "history": hist_impact
+            "Rainfall Accumulation": rain_impact,
+            "Terrain Slope": slope_impact,
+            "Historical Frequency": hist_impact
         }
-        # Normalize factors to percentages
         total = sum(factors.values()) or 1.0
-        factors = {k: (v / total) * 100 for k, v in factors.items()}
+        factors = {k: round((v / total) * 100, 1) for k, v in factors.items()}
 
     return {
         "risk_score": round(score, 3),

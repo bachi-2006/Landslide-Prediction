@@ -5,6 +5,7 @@ Fetches elevation and slope data from OpenTopoData API.
 
 import httpx
 import asyncio
+import math
 from typing import TypedDict, Optional, List
 import logging
 
@@ -47,16 +48,14 @@ async def fetch_elevation_and_slope(lat: float, lon: float) -> Optional[Elevatio
                 if not elevations:
                     return None
 
-                center_elev = elevations[0]
-
-                # Simple Slope Calculation: Max difference relative to distance
-                # Slope = (diff_elevation / distance) * 100
-                # Distance is approx 111m
+                # Slope Calculation: Angle in degrees
+                # Slope angle = arctan(elevation_rise / horizontal_run)
+                # Approximate horizontal offset is ~111 meters
                 max_diff = max([abs(e - center_elev) for e in elevations[1:]])
-                slope_deg = (max_diff / 111.0) * 100 # Very rough approximation for MVP
+                slope_deg = round(math.degrees(math.atan(max_diff / 111.0)), 1)
 
                 return {
-                    "elevation": center_elev,
+                    "elevation": round(center_elev, 1),
                     "slope": slope_deg
                 }
 
