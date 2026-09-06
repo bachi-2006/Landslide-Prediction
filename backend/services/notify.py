@@ -50,16 +50,79 @@ async def send_push_notification(tokens: List[str], title: str, body: str) -> bo
     return success
 
 
+import httpx
+
 async def send_sms_alert(phone_numbers: List[str], message: str) -> dict:
     """
     Sends early warning SMS alerts to field officials and community contacts.
-    Falls back to automated simulation log if SMS gateway credentials are not configured.
+    Integrates with live Fast2SMS/Gov gateway when SMS_GATEWAY_API_KEY is configured,
+    with honest fallback simulation logging when no API key is provided.
     """
     sms_key = os.getenv("SMS_GATEWAY_API_KEY")
-    logger.info(f"[SMS DISPATCH] Alert queued for {len(phone_numbers)} recipients: {message}")
+    clean_numbers = [num.replace("+91", "").replace("-", "").replace(" ", "").strip() for num in phone_numbers if num.strip()]
+
+    if not clean_numbers:
+        return {
+            "channel": "sms",
+            "recipients_count": 0,
+            "status": "skipped",
+            "gateway": "none",
+            "detail": "No valid recipient mobile numbers specified"
+        }
+
+    logger.info(f"[SMS DISPATCH] Processing alert for {len(clean_numbers)} recipients: {message}")
+
+    # Live Gateway Dispatch (Fast2SMS Quick SMS Route)
+    if sms_key and sms_key != "your_sms_gateway_api_key":
+        try:
+            url = "https://www.fast2sms.com/dev/bulkV2"
+            headers = {
+                "authorization": sms_key,
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "route": "q",
+                "message": message[:155], # SMS character budget
+                "language": "english",
+                "flash": 0,
+                "numbers": ",".join(clean_numbers)
+            }
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(url, headers=headers, json=payload)
+                data = resp.json()
+                if data.get("return"):
+                    logger.info(f"[SMS LIVE] Successfully delivered to gateway: {data.get('request_id')}")
+                    return {
+                        "channel": "sms",
+                        "recipients_count": len(clean_numbers),
+                        "status": "delivered",
+                        "gateway": "Fast2SMS-Live",
+                        "request_id": data.get("request_id")
+                    }
+                else:
+                    logger.warning(f"[SMS LIVE] Gateway returned error: {data.get('message')}")
+                    return {
+                        "channel": "sms",
+                        "recipients_count": len(clean_numbers),
+                        "status": "gateway_error",
+                        "gateway": "Fast2SMS-Live",
+                        "detail": data.get("message")
+                    }
+        except Exception as e:
+            logger.error(f"[SMS LIVE] Failed to contact gateway: {e}")
+            return {
+                "channel": "sms",
+                "recipients_count": len(clean_numbers),
+                "status": "connection_error",
+                "gateway": "Fast2SMS-Live",
+                "detail": str(e)
+            }
+
+    # Simulation mode when SMS gateway is not configured
     return {
         "channel": "sms",
-        "recipients_count": len(phone_numbers),
-        "status": "delivered" if sms_key else "simulated_success",
-        "gateway": "CDAC/Gov-SMS" if sms_key else "Simulated-Telecom-Gateway"
+        "recipients_count": len(clean_numbers),
+        "status": "simulated",
+        "gateway": "Simulation (Configure SMS_GATEWAY_API_KEY in .env for live SMS)",
+        "preview_message": message[:80] + "..."
     }
