@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">NE-SHIELD</string>
+    <string name="title_activity_main">NE-SHIELD</string>
+    <string name="package_name">org.neshield.app</string>
+    <string name="custom_url_scheme">org.neshield.app</string>
+</resources>
