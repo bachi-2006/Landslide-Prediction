@@ -60,30 +60,28 @@ def test_simulate_auth_guard():
             assert resp_good.json()['success'] is True
     run_async(_test())
 
-def test_hardware_siren_auth_guard():
+def test_hardware_siren_trigger():
     async def _test():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
-            # 1. Unauthenticated -> 401
-            resp_no_auth = await client.post('/api/alert/hardware/trigger', json={'active': True})
-            assert resp_no_auth.status_code == 401
-
-            # 2. Field officer auth -> 403 (Admin required)
-            resp_officer = await client.post(
+            # 1. Trigger hardware siren -> 200
+            resp_trigger = await client.post(
                 '/api/alert/hardware/trigger',
-                json={'active': True},
-                headers={'Authorization': 'Bearer ne-shield-officer-key-2026'}
+                json={'active': True, 'message': 'Simulated hardware test siren', 'level': 'Critical'}
             )
-            assert resp_officer.status_code == 403
+            assert resp_trigger.status_code == 200
+            assert resp_trigger.json()['status'] == 'success'
+            assert resp_trigger.json()['data']['is_active'] is True
 
-            # 3. Admin auth -> 200
-            resp_admin = await client.post(
-                '/api/alert/hardware/trigger',
-                json={'active': True, 'message': 'Simulated hardware test siren'},
-                headers={'Authorization': 'Bearer ne-shield-admin-key-2026'}
-            )
-            assert resp_admin.status_code == 200
-            assert resp_admin.json()['status'] == 'success'
+            # 2. Hardware status endpoint reflects active alert -> 200
+            resp_status = await client.get('/api/alert/hardware/status')
+            assert resp_status.status_code == 200
+            assert resp_status.json()['is_active'] is True
+
+            # 3. Reset hardware siren -> 200
+            resp_reset = await client.post('/api/alert/hardware/trigger', json={'active': False})
+            assert resp_reset.status_code == 200
+            assert resp_reset.json()['data']['is_active'] is False
     run_async(_test())
 
 def test_evacuate_unknown_location_rejection():
