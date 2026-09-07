@@ -185,3 +185,67 @@ create table if not exists public.relief_requests (
 );
 create index if not exists idx_relief_requests_created on public.relief_requests (created_at desc);
 
+alter table public.relief_requests enable row level security;
+drop policy if exists "public can read relief_requests" on public.relief_requests;
+create policy "public can read relief_requests"
+    on public.relief_requests for select to anon, authenticated using (true);
+drop policy if exists "public can insert relief_requests" on public.relief_requests;
+create policy "public can insert relief_requests"
+    on public.relief_requests for insert to anon, authenticated with check (true);
+drop policy if exists "public can update relief_requests" on public.relief_requests;
+create policy "public can update relief_requests"
+    on public.relief_requests for update to anon, authenticated using (true);
+
+alter table public.users enable row level security;
+drop policy if exists "public can read users" on public.users;
+create policy "public can read users"
+    on public.users for select to anon, authenticated using (true);
+drop policy if exists "public can insert users" on public.users;
+create policy "public can insert users"
+    on public.users for insert to anon, authenticated with check (true);
+drop policy if exists "public can update users" on public.users;
+create policy "public can update users"
+    on public.users for update to anon, authenticated using (true);
+
+drop policy if exists "public can insert incidents" on public.incidents;
+create policy "public can insert incidents"
+    on public.incidents for insert to anon, authenticated with check (true);
+drop policy if exists "public can update incidents" on public.incidents;
+create policy "public can update incidents"
+    on public.incidents for update to anon, authenticated using (true);
+
+drop policy if exists "public can read alerts" on public.alerts;
+create policy "public can read alerts"
+    on public.alerts for select to anon, authenticated using (true);
+drop policy if exists "public can insert alerts" on public.alerts;
+create policy "public can insert alerts"
+    on public.alerts for insert to anon, authenticated with check (true);
+
+drop policy if exists "public can insert fcm_tokens" on public.fcm_tokens;
+create policy "public can insert fcm_tokens"
+    on public.fcm_tokens for insert to anon, authenticated with check (true);
+drop policy if exists "public can read fcm_tokens" on public.fcm_tokens;
+create policy "public can read fcm_tokens"
+    on public.fcm_tokens for select to anon, authenticated using (true);
+
+do $$
+begin
+    if not exists (
+        select 1 from pg_publication_rel rel
+        join pg_class c on c.oid = rel.prrelid
+        join pg_publication p on p.oid = rel.prpubid
+        where p.pubname = 'supabase_realtime' and c.relname = 'alerts'
+    ) then
+        execute 'alter publication supabase_realtime add table public.alerts';
+    end if;
+    if not exists (
+        select 1 from pg_publication_rel rel
+        join pg_class c on c.oid = rel.prrelid
+        join pg_publication p on p.oid = rel.prpubid
+        where p.pubname = 'supabase_realtime' and c.relname = 'relief_requests'
+    ) then
+        execute 'alter publication supabase_realtime add table public.relief_requests';
+    end if;
+end $$;
+
+
