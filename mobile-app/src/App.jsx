@@ -34,7 +34,7 @@ import {
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Geolocation } from '@capacitor/geolocation';
 
-import { mobileApi } from './services/api';
+import { mobileApi, BUNDLED_NER_DISTRICTS, BUNDLED_INCIDENTS, BUNDLED_ROAD_CORRIDORS } from './services/api';
 import { soundEngine } from './services/soundEngine';
 import { notificationService } from './services/notifications';
 import { subscribeToMapUpdates } from './services/supabase';
@@ -48,16 +48,25 @@ import EvacuationModal from './components/EvacuationModal';
 import OfficerIncidentModal from './components/OfficerIncidentModal';
 import OfflineSectorModal from './components/OfflineSectorModal';
 
-const defaultDistricts = [
-  { id: 'IN-ML-01', name: 'East Khasi Hills', state: 'Meghalaya', risk: 'High', score: 78, color: 'high' },
-  { id: 'IN-NL-02', name: 'Phek', state: 'Nagaland', risk: 'Moderate', score: 56, color: 'moderate' },
-  { id: 'IN-MZ-03', name: 'Aizawl', state: 'Mizoram', risk: 'Moderate', score: 49, color: 'moderate' },
-];
+const defaultDistricts = BUNDLED_NER_DISTRICTS.map(d => ({
+  id: d.district_id,
+  name: d.district_name,
+  state: d.state || 'NER',
+  risk: d.risk_level,
+  score: Math.round(d.risk_score * 100),
+  color: d.risk_level.toLowerCase()
+}));
 
-const defaultAlerts = [
-  { id: '1', type: 'High risk', title: 'Heavy rain expected', text: 'East Khasi Hills · next 6 hours', time: 'Live', color: 'red' },
-  { id: '2', type: 'Road update', title: 'NH-6 partially blocked', text: 'Near Mawryngkneng · use alternate route', time: 'Live', color: 'amber' },
-];
+const defaultAlerts = BUNDLED_INCIDENTS.map((inc, i) => ({
+  id: inc.id || String(i),
+  type: 'Citizen Hazard',
+  title: inc.description.slice(0, 32),
+  text: `${inc.description} · ${inc.submitted_by || 'Field Reporter'}`,
+  time: 'Verified',
+  color: 'red',
+  latitude: inc.latitude,
+  longitude: inc.longitude
+}));
 
 function App() {
   const [activeTab, setActiveTab] = useState('home');
@@ -77,12 +86,12 @@ function App() {
   const [inspectingDistrict, setInspectingDistrict] = useState(null);
   const [activeEmergencyAlert, setActiveEmergencyAlert] = useState(null);
 
-  // Live Database States
+  // Live Database States (Pre-populated with rich bundled data so app is never blank)
   const [districts, setDistricts] = useState(defaultDistricts);
   const [alerts, setAlerts] = useState(defaultAlerts);
-  const [rawIncidents, setRawIncidents] = useState([]);
+  const [rawIncidents, setRawIncidents] = useState(BUNDLED_INCIDENTS);
   const [selectedDistrict, setSelectedDistrict] = useState(defaultDistricts[0]);
-  const [roadCorridors, setRoadCorridors] = useState([]);
+  const [roadCorridors, setRoadCorridors] = useState(BUNDLED_ROAD_CORRIDORS);
   const [refreshingHome, setRefreshingHome] = useState(false);
   const [userLocationName, setUserLocationName] = useState('Shillong, Meghalaya');
 
@@ -131,14 +140,27 @@ function App() {
       // 1. Live district risks
       const riskRes = await mobileApi.getRisks();
       if (riskRes.data && riskRes.data.length > 0) {
-        const mapped = riskRes.data.map(d => ({
-          id: d.district_id,
-          name: d.district_name || d.district_id,
-          state: d.district_name?.includes('Khasi') || d.district_name?.includes('Shillong') ? 'Meghalaya' : 'NER',
-          risk: d.risk_level || 'Moderate',
-          score: Math.round((d.risk_score || 0.5) * 100),
-          color: (d.risk_level || 'moderate').toLowerCase()
-        }));
+        const mapped = riskRes.data.map(d => {
+          const score = typeof d.risk_score === 'number' ? Math.round(d.risk_score * 100) : 60;
+          const level = d.risk_level || (score >= 75 ? 'Critical' : score >= 55 ? 'High' : score >= 35 ? 'Moderate' : 'Low');
+          const dName = d.district_name || d.district_id || 'District';
+          const inferState = d.state || (
+            dName.includes('Khasi') || dName.includes('Shillong') || dName.includes('Bhoi') || dName.includes('Jaintia') ? 'Meghalaya' :
+            dName.includes('Kohima') || dName.includes('Phek') || dName.includes('Mokokchung') ? 'Nagaland' :
+            dName.includes('Aizawl') || dName.includes('Lunglei') || dName.includes('Champhai') ? 'Mizoram' :
+            dName.includes('Sikkim') || dName.includes('Gangtok') || dName.includes('Namchi') ? 'Sikkim' :
+            dName.includes('Tawang') || dName.includes('Kameng') || dName.includes('Pare') ? 'Arunachal Pradesh' :
+            dName.includes('Hasao') || dName.includes('Kamrup') || dName.includes('Guwahati') ? 'Assam' : 'NER'
+          );
+          return {
+            id: d.district_id,
+            name: dName,
+            state: inferState,
+            risk: level,
+            score,
+            color: level.toLowerCase()
+          };
+        });
         setDistricts(mapped);
         if (!selectedDistrict) setSelectedDistrict(mapped[0]);
       }
@@ -150,8 +172,8 @@ function App() {
         const mappedIncidents = incRes.data.map((inc, i) => ({
           id: inc.id || String(i),
           type: 'Citizen Hazard',
-          title: inc.description.slice(0, 32),
-          text: `${inc.description} · ${inc.submitted_by || 'Field Reporter'}`,
+          title: (inc.description || 'Hazard Alert').slice(0, 32),
+          text: `${inc.description || 'Hazard reported'} · ${inc.submitted_by || 'Field Reporter'}`,
           time: inc.created_at ? new Date(inc.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live',
           color: 'red',
           latitude: inc.latitude,
@@ -184,13 +206,11 @@ function App() {
 
   const handleManualRefresh = async () => {
     setRefreshingHome(true);
-    soundEngine.playChime();
     await fetchLiveData();
     setTimeout(() => setRefreshingHome(false), 800);
   };
 
   const handleAcquireLocationChip = () => {
-    soundEngine.playChime();
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
@@ -693,10 +713,7 @@ function NavButton({ active, label, icon, onClick }) {
   return (
     <button 
       className={`nav-item ${active ? 'active' : ''}`} 
-      onClick={() => {
-        soundEngine.playChime();
-        onClick();
-      }}
+      onClick={onClick}
     >
       {icon}
       <span>{label}</span>

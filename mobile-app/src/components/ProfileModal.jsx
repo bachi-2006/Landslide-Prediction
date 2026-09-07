@@ -48,7 +48,6 @@ export default function ProfileModal({ onClose, isOnline }) {
     localStorage.setItem('ne_user_district', district.trim());
     localStorage.setItem('neshield_user_role', role);
     localStorage.setItem('neshield_api_host', apiHost.trim());
-    soundEngine.playChime();
     setSaved(true);
     setTimeout(() => {
       setSaved(false);

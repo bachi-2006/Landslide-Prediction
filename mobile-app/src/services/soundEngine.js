@@ -20,12 +20,16 @@ class MobileSoundEngine {
   }
 
   playChime() {
+    // Silence button beeps by default; only play if explicitly enabled in preferences
     try {
+      const isEnabled = typeof window !== 'undefined' && localStorage.getItem('neshield_button_sounds') === 'true';
+      if (!isEnabled) return;
+
       this.init();
       if (!this.ctx) return;
       const now = this.ctx.currentTime;
 
-      // Two-tone warning chime (880Hz -> 1174Hz)
+      // Two-tone gentle chime
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
 
@@ -33,21 +37,16 @@ class MobileSoundEngine {
       osc.frequency.setValueAtTime(880, now);
       osc.frequency.setValueAtTime(1174.66, now + 0.12);
 
-      gain.gain.setValueAtTime(0.35, now);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.55);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
 
       osc.connect(gain);
       gain.connect(this.ctx.destination);
 
       osc.start(now);
-      osc.stop(now + 0.55);
-
-      // Trigger short phone haptic buzz
-      if (typeof navigator !== 'undefined' && navigator.vibrate) {
-        navigator.vibrate([100, 50, 150]);
-      }
+      osc.stop(now + 0.35);
     } catch (e) {
-      console.warn('Audio chime error:', e);
+      // ignore audio errors
     }
   }
 

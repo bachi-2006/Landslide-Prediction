@@ -133,7 +133,6 @@ export default function MobileMapView({
           const lon = pos.coords.longitude;
           setTargetViewport({ lat, lon, zoom: 12 });
           setInspectedPoint({ lat, lon, label: 'My Live GPS Location' });
-          soundEngine.playChime();
         },
         (err) => {
           setLocating(false);
@@ -157,9 +156,6 @@ export default function MobileMapView({
       const res = await mobileApi.calculatePointRisk(lat, lon, 'Field Tap');
       if (res.success) {
         setPointCalculation(res.data);
-        if (res.data.risk_score >= 0.7) {
-          soundEngine.playChime();
-        }
       }
     } catch (e) {
       console.warn("Point risk calculation fallback:", e);
@@ -168,12 +164,29 @@ export default function MobileMapView({
     }
   };
 
+  const findMatchingDistrict = (districtsList, feature) => {
+    if (!districtsList || !feature) return null;
+    const fId = (feature.properties?.id || '').toLowerCase();
+    const fName = (feature.properties?.name || feature.properties?.district_name || '').toLowerCase();
+    return districtsList.find(d => {
+      const dId = (d.id || '').toLowerCase();
+      const dName = (d.name || d.district_name || '').toLowerCase();
+      return (
+        dId === fId ||
+        dName === fName ||
+        (fName && dName.includes(fName)) ||
+        (dName && fName.includes(dName)) ||
+        (fId && dName.replace(/\s+/g, '-').includes(fId))
+      );
+    });
+  };
+
   const onEachDistrictFeature = (feature, layer) => {
-    const featureId = feature.properties.id;
-    const match = districts.find(d => d.id === featureId);
+    const match = findMatchingDistrict(districts, feature);
     const name = feature.properties.name || feature.properties.district_name || 'District';
     const risk = match?.risk || 'Moderate';
     const score = match?.score || 50;
+    const districtId = match?.id || feature.properties.id;
 
     layer.bindTooltip(`
       <div style="font-size: 11px; font-weight: bold; padding: 2px 4px;">
@@ -185,9 +198,9 @@ export default function MobileMapView({
     layer.on({
       click: () => {
         onSelectDistrict({
-          id: featureId,
+          id: districtId,
           name,
-          state: feature.properties.state || 'NER',
+          state: feature.properties.state || match?.state || 'NER',
           risk,
           score
         });
@@ -219,7 +232,7 @@ export default function MobileMapView({
             data={geoJsonData}
             onEachFeature={onEachDistrictFeature}
             style={(feature) => {
-              const match = districts.find(d => d.id === feature.properties.id);
+              const match = findMatchingDistrict(districts, feature);
               const risk = match?.risk || 'Moderate';
               return {
                 fillColor: riskColors[risk] || '#eab308',
