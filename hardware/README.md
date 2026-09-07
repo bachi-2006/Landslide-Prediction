@@ -124,3 +124,19 @@ ORDER BY created_at DESC;
      - The ESP32 I2C Display displays: `! NEW INCIDENT (15s) !` with incident description!
      - `LED_ALERT_PIN` (GPIO 5) blinks rapidly at 5Hz for 15 seconds!
      - The mandatory acoustic siren (GPIO 4) sounds!
+
+---
+
+## 📡 Local Offline Wi-Fi REST API (Port 80)
+
+When connected to `NE-SHIELD-EMERGENCY` AP, any phone, browser, or the mobile app can talk directly to the ESP32:
+
+| Method & URL | Function | Response |
+| :--- | :--- | :--- |
+| `GET http://192.168.4.1/api/siren?state=on` | Instantly turn acoustic siren (GPIO 4) ON | `{"status":"ok","siren_active":true}` |
+| `GET http://192.168.4.1/api/siren?state=off` | Instantly silence acoustic siren (GPIO 4) | `{"status":"ok","siren_active":false}` |
+| `GET http://192.168.4.1/api/status` | Diagnostic beacon telemetry (IP, DB, clients) | `{"node_id":"...","siren_active":...}` |
+| `GET http://192.168.4.1/api/sos_logs` | View all victim registrations stored in flash | `[{"id":1,"citizen_name":"..."}, ...]` |
+
+> [!NOTE]
+> **Automatic Offline Flash Queue Sync**: If the ESP32 receives captive portal submissions while station Wi-Fi is disconnected, it saves them with `synced = false` in internal flash memory. As soon as station Wi-Fi reconnects, the background worker automatically flushes all pending records to the central cloud database!

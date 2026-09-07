@@ -45,6 +45,8 @@ const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lan
 
     // Assign only my incidents filter (for field officers)
     const [filterMyOnly, setFilterMyOnly] = useState(false);
+    // Reporter filter: 'all' | 'officer' | 'citizen'
+    const [incidentReporterFilter, setIncidentReporterFilter] = useState('all');
 
     // ESP32 Hardware Beacon & Captive Portal SOS state
     const [beaconLogs, setBeaconLogs] = useState([]);
@@ -405,6 +407,34 @@ const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lan
                                     {filterMyOnly ? '✓ My Assigned Only' : '📋 My Assigned Only'}
                                 </button>
                             )}
+
+                            {/* Individual Reporter Type Filter Pills */}
+                            <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg p-0.5 shadow-sm">
+                                <button
+                                    type="button"
+                                    onClick={() => setIncidentReporterFilter('all')}
+                                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition ${incidentReporterFilter === 'all' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                                >
+                                    All ({incidents.length})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setIncidentReporterFilter('officer')}
+                                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition flex items-center gap-1 ${incidentReporterFilter === 'officer' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 hover:text-blue-700'}`}
+                                >
+                                    <span>🛡️ Officers</span>
+                                    <span>({officerIncidentsCount})</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setIncidentReporterFilter('citizen')}
+                                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition flex items-center gap-1 ${incidentReporterFilter === 'citizen' ? 'bg-amber-600 text-white shadow-sm' : 'text-slate-600 hover:text-amber-700'}`}
+                                >
+                                    <span>👥 Citizens</span>
+                                    <span>({citizenIncidentsCount})</span>
+                                </button>
+                            </div>
+
                             <span className="text-xs text-slate-500 ml-auto">
                                 {filteredIncidents.length} incident{filteredIncidents.length !== 1 ? 's' : ''} shown
                             </span>

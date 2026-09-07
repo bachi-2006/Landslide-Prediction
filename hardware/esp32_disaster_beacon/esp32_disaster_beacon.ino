@@ -1,36 +1,3 @@
-/*
- * =====================================================================================
- *  NE-SHIELD: ESP32 Disaster Alert Beacon & Citizen Captive Portal Node
- *  Smart India Hackathon (SIH) 2026
- *
- *  HARDWARE PINOUT:
- *    - GPIO 4  : SIREN_PIN       (Mandatory Acoustic Siren / Relay / Active Buzzer)
- *    - GPIO 18 : LED_DB_PIN      (LED 1: Solid ON = Active Connection with DB/Backend)
- *    - GPIO 19 : LED_WIFI_PIN    (LED 2: Solid ON = Web / Wi-Fi Internet Access)
- *    - GPIO 5  : LED_ALERT_PIN   (LED 3: Blinks for 15 sec interval on NEW INCIDENT)
- *    - GPIO 2  : ONBOARD_LED_PIN (Mirror alert indicator)
- *    - GPIO 21 : I2C_SDA_PIN     (I2C OLED Display SDA - 128x64 SSD1306)
- *    - GPIO 22 : I2C_SCL_PIN     (I2C OLED Display SCL - 128x64 SSD1306)
- *
- *  CORE CAPABILITIES:
- *    1. DUAL WI-FI MODE:
- *       - AP Mode ("NE-SHIELD-EMERGENCY"): Open Wi-Fi captive portal for victims.
- *       - STA Mode: Connects to local router/hotspot to sync with backend & Supabase DB.
- *    2. I2C DISPLAY (SSD1306 128x64):
- *       - Idle Screen: Shows Node ID, Wi-Fi IP, DB Connection, AP Clients, Siren Status.
- *       - Incident Screen: Displays "🚨 NEW INCIDENT!" + details, triggers 15-sec LED blink.
- *    3. 15-SECOND INCIDENT LED BLINK:
- *       - Non-blocking millis() timer blinks LED_ALERT_PIN for 15s on new incident report.
- *    4. CAPTIVE PORTAL SOS & DATABASE LOGGING:
- *       - When stranded citizens connect to Wi-Fi and submit their details,
- *         data is saved to flash AND immediately posted to backend DB:
- *         POST /api/alert/hardware/beacon/sos
- *    5. ADMIN REMOTE MANAGEMENT:
- *       - Admin can trigger mandatory siren from web dashboard.
- *       - ESP32 sends periodic heartbeats to: POST /api/alert/hardware/beacon/heartbeat
- * =====================================================================================
- */
-
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -63,7 +30,7 @@
 // =====================================================================================
 // [STA MODE] Take Wi-Fi from phone hotspot or router to reach the cloud backend
 const char* sta_ssid     = "MSI 6704";             // Replace with your Wi-Fi SSID
-const char* sta_password = "YOUR_WIFI_PASSWORD";    // Replace with your Wi-Fi Password
+const char* sta_password = "11111111";    // Replace with your Wi-Fi Password
 
 // [AP MODE] Open Emergency Wi-Fi network for citizens & victims
 const char* ap_ssid      = "NE-SHIELD-EMERGENCY";
@@ -181,6 +148,30 @@ const char PORTAL_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       <button type="submit" class="btn-submit">Transmit SOS to Rescue Teams</button>
     </form>
   </div>
+
+  <div class="card" style="border: 1px solid #374151; background: #0f172a; margin-top: 6px;">
+    <div class="card-title" style="font-size: 0.95rem; color: #f59e0b;">⚡ Field Officer & Responder Siren Controls</div>
+    <p style="font-size: 0.78rem; color: #94a3b8; margin-bottom: 10px;">Direct local Wi-Fi control over hardware acoustic beacon buzzer (GPIO 4).</p>
+    <div style="display: flex; gap: 8px;">
+      <button type="button" onclick="toggleLocalSiren('on')" style="flex: 1; background: #dc2626; color: white; border: none; border-radius: 8px; padding: 10px; font-weight: bold; font-size: 0.82rem; cursor: pointer;">🚨 Sound Siren</button>
+      <button type="button" onclick="toggleLocalSiren('off')" style="flex: 1; background: #334155; color: white; border: none; border-radius: 8px; padding: 10px; font-weight: bold; font-size: 0.82rem; cursor: pointer;">⏹️ Silence Siren</button>
+    </div>
+    <div id="sirenMsg" style="font-size: 0.78rem; color: #38bdf8; margin-top: 8px; text-align: center; font-weight: bold;"></div>
+  </div>
+
+  <script>
+    function toggleLocalSiren(state) {
+      document.getElementById('sirenMsg').innerText = 'Transmitting command to beacon...';
+      fetch('/api/siren?state=' + state)
+        .then(r => r.json())
+        .then(d => {
+          document.getElementById('sirenMsg').innerText = d.siren_active ? '🚨 SIREN SOUNDING (ACTIVE ALERT)' : '⏹️ SIREN SILENCED (STANDBY)';
+        })
+        .catch(e => {
+          document.getElementById('sirenMsg').innerText = 'Command sent.';
+        });
+    }
+  </script>
 </body>
 </html>)rawliteral";
 
@@ -445,6 +436,16 @@ void sendHeartbeat() {
   }
 }
 
+// Clean input strings to prevent broken JSON payloads
+String cleanString(String s) {
+  s.replace("\"", "'");
+  s.replace("\r", " ");
+  s.replace("\n", " ");
+  s.replace("\\", "/");
+  s.trim();
+  return s;
+}
+
 // Forward captive portal citizen submission to cloud database
 bool forwardSosToBackend(String name, String phone, int people, String med, String notes, String clientIp) {
   if (WiFi.status() != WL_CONNECTED) return false;
@@ -455,15 +456,15 @@ bool forwardSosToBackend(String name, String phone, int people, String med, Stri
 
   if (http.begin(client, backend_sos_url)) {
     http.addHeader("Content-Type", "application/json");
-    http.setTimeout(5000);
+    http.setTimeout(8000); // 8s to allow cloud spin-up
 
     String json = "{";
     json += "\"beacon_id\":\"" + String(node_id) + "\",";
-    json += "\"citizen_name\":\"" + name + "\",";
-    json += "\"phone\":\"" + phone + "\",";
+    json += "\"citizen_name\":\"" + cleanString(name) + "\",";
+    json += "\"phone\":\"" + cleanString(phone) + "\",";
     json += "\"people_count\":" + String(people) + ",";
-    json += "\"medical_needs\":\"" + med + "\",";
-    json += "\"notes\":\"" + notes + "\",";
+    json += "\"medical_needs\":\"" + cleanString(med) + "\",";
+    json += "\"notes\":\"" + cleanString(notes) + "\",";
     json += "\"ip_address\":\"" + clientIp + "\"";
     json += "}";
 
@@ -474,8 +475,42 @@ bool forwardSosToBackend(String name, String phone, int people, String med, Stri
   return false;
 }
 
+// Background sync worker: flushes stored offline submissions once Wi-Fi reconnects
+unsigned long lastSyncAttempt = 0;
+const unsigned long syncIntervalMs = 12000;
+
+void syncPendingSosLogs() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (millis() - lastSyncAttempt < syncIntervalMs) return;
+  lastSyncAttempt = millis();
+
+  prefs.begin("sos_logs", false);
+  int count = prefs.getInt("count", 0);
+  for (int i = 0; i < count; i++) {
+    String pfx = "sos_" + String(i) + "_";
+    int synced = prefs.getInt((pfx + "s").c_str(), 0);
+    if (synced == 0) {
+      String n = prefs.getString((pfx + "n").c_str(), "Citizen");
+      String p = prefs.getString((pfx + "p").c_str(), "");
+      int c = prefs.getInt((pfx + "c").c_str(), 1);
+      String m = prefs.getString((pfx + "m").c_str(), "None");
+      String msg = prefs.getString((pfx + "msg").c_str(), "");
+
+      Serial.printf("[OFFLINE-SYNC] Forwarding queued SOS #%d (%s) to central cloud...\n", i, n.c_str());
+      if (forwardSosToBackend(n, p, c, m, msg, "192.168.4.1 (synced-from-flash)")) {
+        prefs.putInt((pfx + "s").c_str(), 1);
+        Serial.printf("[OFFLINE-SYNC] Stored SOS #%d successfully synced to database!\n", i);
+      } else {
+        Serial.printf("[OFFLINE-SYNC] Cloud still unreachable, will retry shortly.\n");
+        break;
+      }
+    }
+  }
+  prefs.end();
+}
+
 // =====================================================================================
-// 8. CAPTIVE PORTAL WEB HANDLERS
+// 8. CAPTIVE PORTAL & LOCAL REST API WEB HANDLERS
 // =====================================================================================
 void handleRoot() {
   server.send_P(200, "text/html", PORTAL_HTML);
@@ -492,7 +527,11 @@ void handleSubmitSos() {
   Serial.println("[CAPTIVE] New citizen SOS submission:");
   Serial.printf("  Name: %s | Phone: %s | People: %d | Med: %s\n", name.c_str(), phone.c_str(), people, medical.c_str());
 
-  // 1. Save to local flash memory
+  // 1. Immediately forward to Central Supabase DB via Backend API
+  bool synced = forwardSosToBackend(name, phone, people, medical, notes, clientIp);
+  Serial.printf("  Database sync status: %s\n", synced ? "SUCCESS (Persisted in DB)" : "QUEUED LOCALLY IN FLASH");
+
+  // 2. Save to local flash memory with sync status flag
   prefs.begin("sos_logs", false);
   int count = prefs.getInt("count", 0);
   String keyPrefix = "sos_" + String(count) + "_";
@@ -501,12 +540,9 @@ void handleSubmitSos() {
   prefs.putInt((keyPrefix + "c").c_str(), people);
   prefs.putString((keyPrefix + "m").c_str(), medical);
   prefs.putString((keyPrefix + "msg").c_str(), notes);
+  prefs.putInt((keyPrefix + "s").c_str(), synced ? 1 : 0);
   prefs.putInt("count", count + 1);
   prefs.end();
-
-  // 2. Immediately forward to Central Supabase DB via Backend API
-  bool synced = forwardSosToBackend(name, phone, people, medical, notes, clientIp);
-  Serial.printf("  Database sync status: %s\n", synced ? "SUCCESS (Persisted in DB)" : "QUEUED LOCALLY");
 
   // 3. Return confirmation HTML to citizen's phone
   server.send_P(200, "text/html", SUCCESS_HTML);
@@ -515,6 +551,90 @@ void handleSubmitSos() {
 void handleCaptiveRedirect() {
   server.sendHeader("Location", "http://192.168.4.1/", true);
   server.send(302, "text/plain", "");
+}
+
+// Direct local Wi-Fi control over hardware acoustic siren (GPIO 4)
+void handleApiSiren() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "*");
+  if (server.method() == HTTP_OPTIONS) {
+    server.send(204);
+    return;
+  }
+
+  String state = server.hasArg("state") ? server.arg("state") : "";
+  state.toLowerCase();
+
+  if (state == "on" || state == "1" || state == "true" || state == "active") {
+    sirenActive = true;
+    digitalWrite(SIREN_PIN, HIGH);
+    Serial.println("[LOCAL API] Siren turned ON via local Wi-Fi command");
+  } else if (state == "off" || state == "0" || state == "false" || state == "idle") {
+    sirenActive = false;
+    digitalWrite(SIREN_PIN, LOW);
+    Serial.println("[LOCAL API] Siren turned OFF via local Wi-Fi command");
+  } else {
+    sirenActive = !sirenActive;
+    digitalWrite(SIREN_PIN, sirenActive ? HIGH : LOW);
+  }
+
+  updateIdleDisplay();
+
+  String json = "{\"status\":\"ok\",\"siren_active\":" + String(sirenActive ? "true" : "false") + ",\"node_id\":\"" + String(node_id) + "\"}";
+  server.send(200, "application/json", json);
+}
+
+// Local telemetry & diagnostic status
+void handleApiStatus() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "*");
+
+  String json = "{";
+  json += "\"node_id\":\"" + String(node_id) + "\",";
+  json += "\"siren_active\":" + String(sirenActive ? "true" : "false") + ",";
+  json += "\"db_connected\":" + String(dbConnected ? "true" : "false") + ",";
+  json += "\"web_access\":" + String(webAccess ? "true" : "false") + ",";
+  json += "\"clients_connected\":" + String(WiFi.softAPgetStationNum()) + ",";
+  json += "\"sta_ip\":\"" + WiFi.localIP().toString() + "\",";
+  json += "\"ap_ip\":\"" + apIP.toString() + "\"";
+  json += "}";
+  server.send(200, "application/json", json);
+}
+
+// Direct local read of all stored victim registrations
+void handleApiSosLogs() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "*");
+
+  prefs.begin("sos_logs", true);
+  int count = prefs.getInt("count", 0);
+  String json = "[";
+  for (int i = 0; i < count; i++) {
+    String pfx = "sos_" + String(i) + "_";
+    String n = prefs.getString((pfx + "n").c_str(), "Citizen");
+    String p = prefs.getString((pfx + "p").c_str(), "");
+    int c = prefs.getInt((pfx + "c").c_str(), 1);
+    String m = prefs.getString((pfx + "m").c_str(), "None");
+    String msg = prefs.getString((pfx + "msg").c_str(), "");
+    int s = prefs.getInt((pfx + "s").c_str(), 0);
+
+    if (i > 0) json += ",";
+    json += "{";
+    json += "\"id\":" + String(i + 1) + ",";
+    json += "\"citizen_name\":\"" + cleanString(n) + "\",";
+    json += "\"phone\":\"" + cleanString(p) + "\",";
+    json += "\"people_count\":" + String(c) + ",";
+    json += "\"medical_needs\":\"" + cleanString(m) + "\",";
+    json += "\"notes\":\"" + cleanString(msg) + "\",";
+    json += "\"synced_to_cloud\":" + String(s == 1 ? "true" : "false");
+    json += "}";
+  }
+  prefs.end();
+  json += "]";
+  server.send(200, "application/json", json);
 }
 
 // =====================================================================================
@@ -554,16 +674,19 @@ void setup() {
   dnsServer.start(DNS_PORT, "*", apIP);
   Serial.println("[DNS] Captive Portal intercept active on port 53");
 
-  // 3. Setup Captive Web Server Routes
+  // 3. Setup Captive Web Server Routes & Local REST APIs
   server.on("/", HTTP_GET, handleRoot);
   server.on("/submit_sos", HTTP_POST, handleSubmitSos);
+  server.on("/api/siren", HTTP_ANY, handleApiSiren);
+  server.on("/api/status", HTTP_GET, handleApiStatus);
+  server.on("/api/sos_logs", HTTP_GET, handleApiSosLogs);
   server.on("/generate_204", handleCaptiveRedirect); // Android captive test
   server.on("/canonical.html", handleCaptiveRedirect);
   server.on("/hotspot-detect.html", handleCaptiveRedirect); // Apple iOS captive test
   server.on("/connecttest.txt", handleCaptiveRedirect); // Windows captive test
   server.onNotFound(handleCaptiveRedirect);
   server.begin();
-  Serial.println("[HTTP] Captive Web Server started on port 80");
+  Serial.println("[HTTP] Captive Web Server & Local APIs started on port 80");
 
   // 4. Connect STA Wi-Fi to reach backend
   Serial.printf("[STA] Connecting to station Wi-Fi: '%s'...\n", sta_ssid);
@@ -576,7 +699,7 @@ void loop() {
   // 1. Handle Captive Portal DNS redirection
   dnsServer.processNextRequest();
 
-  // 2. Handle Web Server requests
+  // 2. Handle Web Server requests & Local APIs
   server.handleClient();
 
   // 3. Check Wi-Fi STA connection status
@@ -586,7 +709,10 @@ void loop() {
     webAccess = false;
   }
 
-  // 4. Periodic polling of Cloud Backend
+  // 4. Background Sync: flush stored offline flash submissions to cloud
+  syncPendingSosLogs();
+
+  // 5. Periodic polling of Cloud Backend
   if (millis() - lastPollTime >= pollIntervalMs) {
     lastPollTime = millis();
     pollBackendStatus();
@@ -595,12 +721,13 @@ void loop() {
     }
   }
 
-  // 5. Periodic Heartbeat to register beacon with Admin Dashboard
+  // 6. Periodic Heartbeat to register beacon with Admin Dashboard
   if (millis() - lastHeartbeatTime >= heartbeatIntervalMs) {
     lastHeartbeatTime = millis();
     sendHeartbeat();
   }
 
-  // 6. Actuate LEDs & Siren
+  // 7. Actuate LEDs & Siren
   updateStatusLEDs();
 }
+

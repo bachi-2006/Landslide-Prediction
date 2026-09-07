@@ -273,3 +273,30 @@ def test_session_token_restart_safe():
     assert session['district'] == 'East Khasi Hills'
 
 
+def test_beacon_sos_submission_and_retrieval():
+    async def _test():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
+            # 1. Post a new SOS entry from ESP32 beacon captive portal
+            sos_payload = {
+                'beacon_id': 'ESP32-OFFGRID-01',
+                'citizen_name': 'Dr. Banik Lyngdoh',
+                'phone': '+91 94361 99999',
+                'people_count': 4,
+                'medical_needs': 'Urgent: Elderly diabetic patient needs insulin',
+                'notes': 'Trapped near landslide boulder at km 16',
+                'ip_address': '192.168.4.2'
+            }
+            resp_post = await client.post('/api/alert/hardware/beacon/sos', json=sos_payload)
+            assert resp_post.status_code == 200
+            post_data = resp_post.json()
+            assert post_data['success'] is True
+            assert post_data['data']['citizen_name'] == 'Dr. Banik Lyngdoh'
+
+            # 2. Query beacon logs to ensure it appears in the dashboard
+            resp_get = await client.get('/api/alert/hardware/beacon/logs?beacon_id=ESP32-OFFGRID-01')
+            assert resp_get.status_code == 200
+            get_data = resp_get.json()
+            assert get_data['success'] is True
+            assert any(item['citizen_name'] == 'Dr. Banik Lyngdoh' for item in get_data['data'])
+    run_async(_test())

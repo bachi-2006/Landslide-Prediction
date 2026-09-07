@@ -561,32 +561,64 @@ export const mobileApi = {
     return { success: true, data: BUNDLED_ROAD_CORRIDORS };
   },
 
-  // 6. Hardware Siren & Status
+  // 6. Hardware Siren & Status (Hybrid: Local ESP32 AP + Cloud Backend)
   async getHardwareStatus() {
+    // 1. Try local ESP32 AP endpoint first (instantaneous if connected to NE-SHIELD-EMERGENCY)
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 1200);
+      const localRes = await fetch('http://192.168.4.1/api/status', { signal: ctrl.signal });
+      clearTimeout(tid);
+      if (localRes.ok) {
+        const localData = await localRes.json();
+        return { is_active: localData.siren_active, local_esp: true, ...localData };
+      }
+    } catch (e) {}
+
+    // 2. Central cloud backend status
     try {
       const res = await fetch(`${BASE_URL}/api/alert/hardware/status`);
       if (res.ok) return await res.json();
     } catch (e) {}
-    return { status: 'idle', active: false };
+    return { status: 'idle', active: false, is_active: false };
   },
 
-  async triggerHardware(level = 'Critical', districtId = 'IN-ML-01') {
-    const res = await fetch(`${BASE_URL}/api/alert/hardware/trigger`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-      body: JSON.stringify({
-        active: true,
-        status: 'active',
-        level,
-        district_id: districtId,
-        message: `Disaster alert triggered for ${districtId} (${level})`
-      })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Failed to trigger hardware beacon');
+  async triggerHardware(active = true, level = 'Critical', districtId = 'IN-ML-01') {
+    let localSuccess = false;
+    let cloudSuccess = false;
+
+    // 1. Direct local Wi-Fi call to ESP32 (immediate response when connected to beacon AP)
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 1500);
+      const localRes = await fetch(`http://192.168.4.1/api/siren?state=${active ? 'on' : 'off'}`, { signal: ctrl.signal });
+      clearTimeout(tid);
+      if (localRes.ok) localSuccess = true;
+    } catch (e) {
+      // Not connected to local ESP32 AP, proceed to cloud
     }
-    return res.json();
+
+    // 2. Central Cloud call to update backend & database
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 3500);
+      const res = await fetch(`${BASE_URL}/api/alert/hardware/trigger`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          active: active,
+          status: active ? 'active' : 'idle',
+          level,
+          district_id: districtId,
+          message: active ? `Disaster alert triggered for ${districtId} (${level})` : 'Siren Silenced'
+        })
+      });
+      clearTimeout(tid);
+      if (res.ok) cloudSuccess = true;
+    } catch (e) {}
+
+    return { success: localSuccess || cloudSuccess, local_esp: localSuccess, cloud_synced: cloudSuccess };
   },
 
   // 7. Device Push Token Registration

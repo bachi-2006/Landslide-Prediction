@@ -241,6 +241,9 @@ async def beacon_heartbeat(req: BeaconHeartbeatRequest):
         return {"success": True, "beacon_id": req.beacon_id, "cached": True, "note": str(e)}
 
 
+# In-memory resilient buffer for beacon SOS submissions
+IN_MEMORY_BEACON_LOGS = []
+
 class BeaconSosRequest(BaseModel):
     beacon_id: str
     citizen_name: str
@@ -256,13 +259,35 @@ async def register_beacon_sos(req: BeaconSosRequest):
     """
     Called when a stranded victim connects to the ESP32 emergency Wi-Fi
     and enters their contact/family/medical details on the captive portal.
-    Persists into Supabase beacon_sos_logs and relief_requests.
+    Persists into in-memory buffer, Supabase beacon_sos_logs, and relief_requests.
     """
-    saved = False
+    from datetime import datetime, timezone
+    import time
+    
+    saved_db = False
     sos_id = f"BEACON-SOS-{req.beacon_id[-4:]}-{req.citizen_name[:3].upper()}"
+    now_iso = datetime.now(timezone.utc).isoformat()
+    
+    # 1. Always record in resilient in-memory buffer immediately
+    memory_entry = {
+        "id": f"sos-{int(time.time() * 1000)}",
+        "beacon_id": req.beacon_id,
+        "citizen_name": req.citizen_name,
+        "phone": req.phone or "",
+        "people_count": req.people_count or 1,
+        "medical_needs": req.medical_needs or "None",
+        "notes": req.notes or "",
+        "ip_address": req.ip_address or "",
+        "synced_to_cloud": True,
+        "created_at": now_iso
+    }
+    IN_MEMORY_BEACON_LOGS.insert(0, memory_entry)
+    if len(IN_MEMORY_BEACON_LOGS) > 200:
+        IN_MEMORY_BEACON_LOGS.pop()
+
+    # 2. Persist to Supabase
     try:
         db = get_supabase()
-        # 1. Log to beacon_sos_logs
         db.table("beacon_sos_logs").insert({
             "beacon_id": req.beacon_id,
             "citizen_name": req.citizen_name,
@@ -274,7 +299,6 @@ async def register_beacon_sos(req: BeaconSosRequest):
             "synced_to_cloud": True
         }).execute()
 
-        # 2. Also register in relief_requests so SEOC command sees them immediately
         db.table("relief_requests").insert({
             "id": sos_id,
             "user_name": req.citizen_name,
@@ -290,13 +314,15 @@ async def register_beacon_sos(req: BeaconSosRequest):
             "beacon_id": req.beacon_id,
             "notes": f"Medical: {req.medical_needs}. Notes: {req.notes or 'None'}"
         }).execute()
-        saved = True
+        saved_db = True
     except Exception as e:
         pass
 
     return {
         "success": True,
-        "saved_to_db": saved,
+        "saved_to_db": saved_db,
+        "in_memory_cached": True,
+        "data": memory_entry,
         "message": f"SOS details for {req.citizen_name} recorded into SEOC disaster register."
     }
 
@@ -304,13 +330,34 @@ async def register_beacon_sos(req: BeaconSosRequest):
 @router.get("/hardware/beacon/logs")
 async def get_beacon_logs(beacon_id: Optional[str] = None):
     """Returns list of citizens who signed into the ESP32 Wi-Fi captive portal."""
+    db_logs = []
     try:
         db = get_supabase()
         query = db.table("beacon_sos_logs").select("*").order("created_at", desc=True).limit(50)
         if beacon_id:
             query = query.eq("beacon_id", beacon_id)
         res = query.execute()
-        return {"success": True, "data": res.data or []}
+        db_logs = res.data or []
     except Exception as e:
-        return {"success": True, "data": []}
+        pass
+
+    # Merge database records and in-memory buffer with deduplication
+    seen_keys = set()
+    combined = []
+    for item in db_logs:
+        key = f"{item.get('citizen_name')}_{item.get('phone')}"
+        seen_keys.add(key)
+        combined.append(item)
+
+    for item in IN_MEMORY_BEACON_LOGS:
+        if beacon_id and item.get("beacon_id") != beacon_id:
+            continue
+        key = f"{item.get('citizen_name')}_{item.get('phone')}"
+        if key not in seen_keys:
+            seen_keys.add(key)
+            combined.append(item)
+
+    combined.sort(key=lambda x: str(x.get("created_at", "")), reverse=True)
+    return {"success": True, "data": combined[:50]}
+
 

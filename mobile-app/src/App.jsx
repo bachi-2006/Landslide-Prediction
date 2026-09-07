@@ -94,6 +94,31 @@ function App() {
   const [roadCorridors, setRoadCorridors] = useState(BUNDLED_ROAD_CORRIDORS);
   const [refreshingHome, setRefreshingHome] = useState(false);
   const [userLocationName, setUserLocationName] = useState('Shillong, Meghalaya');
+  const [sirenSounding, setSirenSounding] = useState(false);
+
+  const handleSirenToggle = async (activate) => {
+    setSirenSounding(activate);
+    if (activate) {
+      soundEngine.playSiren(6);
+    } else {
+      soundEngine.stopSiren();
+    }
+    try {
+      const res = await mobileApi.triggerHardware(activate, 'Critical', selectedDistrict?.id || 'IN-ML-01');
+      if (activate) {
+        if (res?.local_esp) {
+          setReportToast({ success: true, message: '🚨 Local ESP32 beacon buzzer (GPIO 4) activated!' });
+        } else {
+          setReportToast({ success: true, message: '🚨 Siren broadcast triggered across network!' });
+        }
+      } else {
+        setReportToast({ success: true, message: '⏹️ Siren silenced across beacon & phone.' });
+      }
+      setTimeout(() => setReportToast(null), 4000);
+    } catch (e) {
+      console.warn('Hardware siren toggle note:', e);
+    }
+  };
 
   // Network listeners & auto-sync offline aid queue
   useEffect(() => {
@@ -511,11 +536,11 @@ function App() {
             <div className="hero-footer">
               <span><CloudRain size={16} /> 86% precipitation probability</span>
               <button 
-                onClick={() => soundEngine.playSiren(3)}
-                style={{ background: 'rgba(239, 68, 68, 0.35)', border: '1px solid rgba(255,255,255,0.3)', color: 'white', borderRadius: '8px', padding: '5px 9px', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                onClick={() => handleSirenToggle(!sirenSounding)}
+                style={{ background: sirenSounding ? '#dc2626' : 'rgba(239, 68, 68, 0.35)', border: '1px solid rgba(255,255,255,0.3)', color: 'white', borderRadius: '8px', padding: '5px 9px', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
               >
                 <Volume2 size={13} />
-                <span>Test Siren</span>
+                <span>{sirenSounding ? 'Stop Siren' : 'Test Siren'}</span>
               </button>
             </div>
           </section>
@@ -1102,17 +1127,35 @@ function AlertsView({
       </div>
 
       {/* Siren Alarm Controller */}
-      <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '16px', padding: '16px', marginBottom: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+      <div style={{ background: sirenSounding ? '#fee2e2' : '#fef2f2', border: sirenSounding ? '2px solid #ef4444' : '1px solid #fecaca', borderRadius: '16px', padding: '16px', marginBottom: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
         <div>
-          <strong style={{ fontSize: '13px', display: 'block', color: '#991b1b' }}>🚨 Emergency Siren Broadcast</strong>
-          <span style={{ fontSize: '11px', color: '#7f1d1d' }}>Triggers high-decibel audible alarm on this phone</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <strong style={{ fontSize: '13px', color: '#991b1b' }}>🚨 Emergency Siren Broadcast</strong>
+            {sirenSounding && (
+              <span style={{ background: '#dc2626', color: 'white', fontSize: '9px', fontWeight: '900', padding: '2px 6px', borderRadius: '9999px', textTransform: 'uppercase' }}>
+                ACTIVE
+              </span>
+            )}
+          </div>
+          <span style={{ fontSize: '11px', color: '#7f1d1d', display: 'block', marginTop: '2px' }}>
+            {sirenSounding ? 'Acoustic siren is active on phone & connected ESP32 hardware beacon!' : 'Triggers hardware acoustic buzzer on ESP32 & phone alarm'}
+          </span>
         </div>
-        <button
-          onClick={() => soundEngine.playSiren(5)}
-          style={{ background: '#dc2626', color: 'white', border: 'none', borderRadius: '12px', padding: '10px 14px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}
-        >
-          Sound Siren
-        </button>
+        {sirenSounding ? (
+          <button
+            onClick={() => handleSirenToggle(false)}
+            style={{ background: '#0f172a', color: 'white', border: 'none', borderRadius: '12px', padding: '10px 14px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}
+          >
+            ⏹️ Silence Siren
+          </button>
+        ) : (
+          <button
+            onClick={() => handleSirenToggle(true)}
+            style={{ background: '#dc2626', color: 'white', border: 'none', borderRadius: '12px', padding: '10px 14px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}
+          >
+            🚨 Sound Siren
+          </button>
+        )}
       </div>
 
       {/* Official Helplines */}

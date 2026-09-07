@@ -133,7 +133,8 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded, activeR
     const [activeBasemap, setActiveBasemap] = useState('standard');
     const [showDistricts, setShowDistricts] = useState(true);
     const [showHistorical, setShowHistorical] = useState(true);
-    const [showIncidents, setShowIncidents] = useState(true);
+    const [showOfficerIncidents, setShowOfficerIncidents] = useState(true);
+    const [showCitizenIncidents, setShowCitizenIncidents] = useState(true);
     const [showControlPanel, setShowControlPanel] = useState(true);
 
     // Inspection & Analytics state for any pin or map click
@@ -388,7 +389,10 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded, activeR
 
                 )}
 
-                {showIncidents && incidents.map(inc => {
+                {incidents.filter(inc => {
+                    const isOfficer = inc.reporter_role === 'field_officer' || (inc.submitted_by && inc.submitted_by.toLowerCase().includes('officer'));
+                    return isOfficer ? showOfficerIncidents : showCitizenIncidents;
+                }).map(inc => {
                     const isOfficer = inc.reporter_role === 'field_officer' || (inc.submitted_by && inc.submitted_by.toLowerCase().includes('officer'));
                     return (
                         <Marker 
@@ -622,8 +626,8 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded, activeR
                                     </span>
                                     <input 
                                         type="checkbox" 
-                                        checked={showIncidents} 
-                                        onChange={() => setShowIncidents(!showIncidents)}
+                                        checked={showOfficerIncidents} 
+                                        onChange={() => setShowOfficerIncidents(!showOfficerIncidents)}
                                         className="cursor-pointer accent-blue-600 rounded" 
                                     />
                                 </label>
@@ -635,8 +639,8 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded, activeR
                                     </span>
                                     <input 
                                         type="checkbox" 
-                                        checked={showIncidents} 
-                                        onChange={() => setShowIncidents(!showIncidents)}
+                                        checked={showCitizenIncidents} 
+                                        onChange={() => setShowCitizenIncidents(!showCitizenIncidents)}
                                         className="cursor-pointer accent-red-600 rounded" 
                                     />
                                 </label>
