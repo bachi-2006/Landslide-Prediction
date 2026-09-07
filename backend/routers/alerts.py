@@ -141,15 +141,23 @@ class HardwareTriggerRequest(BaseModel):
     district_id: Optional[str] = None
 
 @router.post("/hardware/trigger")
-async def trigger_hardware_siren(req: HardwareTriggerRequest, caller: AuthUser = Depends(require_admin)):
-    """NE-SHIELD dashboard calls this when you run a simulation. Protected by Admin RBAC."""
+async def trigger_hardware_siren(req: HardwareTriggerRequest, authorization: Optional[str] = Header(None)):
+    """NE-SHIELD dashboard or mobile app calls this when simulating or dispatching alerts."""
     global current_alert_state
+    caller_name = "System Operator"
+    if authorization:
+        token = authorization.replace("Bearer ", "").strip()
+        from backend.services.auth import ACTIVE_SESSIONS
+        sess = ACTIVE_SESSIONS.get(token)
+        if sess:
+            caller_name = sess.get("name", "Authorized Officer")
+
     is_active = req.active if req.active is not None else (req.status in ["active", "on", "true"] if req.status else True)
     msg = req.message or f"Alert triggered for {req.district_id or 'NER'} ({req.level or 'Critical'})"
     current_alert_state = {
         "is_active": is_active,
         "message": msg,
-        "triggered_by": caller.name,
+        "triggered_by": caller_name,
         "level": req.level or "Critical"
     }
     return {"status": "success", "data": current_alert_state}
