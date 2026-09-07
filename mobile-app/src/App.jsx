@@ -60,7 +60,7 @@ const defaultAlerts = [
 function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [showReport, setShowReport] = useState(false);
-  const [reported, setReported] = useState(false);
+  const [reportToast, setReportToast] = useState(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
   // Modals & Persona
@@ -196,19 +196,39 @@ function App() {
       formData.append('longitude', String(reportData.longitude || 91.8933));
       formData.append('submitted_by', localStorage.getItem('ne_citizen_name') || 'Citizen (Mobile App)');
 
-      await mobileApi.submitIncident(formData);
+      // If photo was captured, retrieve its blob and append as binary file
+      if (reportData.photo) {
+        try {
+          const photoResp = await fetch(reportData.photo);
+          const photoBlob = await photoResp.blob();
+          formData.append('photo', photoBlob, 'incident_evidence.jpg');
+        } catch (photoErr) {
+          console.warn('Could not package photo evidence blob:', photoErr);
+        }
+      }
+
+      const res = await mobileApi.submitIncident(formData);
       
       soundEngine.playChime();
-      setReported(true);
+      const isPersisted = res?.db_persisted !== false;
+      setReportToast({
+        success: true,
+        message: isPersisted
+          ? 'Transmitted to HQ Command Center & Synced across all devices!'
+          : 'Cached in active session (Supabase connection offline).'
+      });
       setShowReport(false);
       fetchLiveData();
-      setTimeout(() => setReported(false), 3500);
+      setTimeout(() => setReportToast(null), 4000);
     } catch (err) {
-      console.warn("Incident submit fallback:", err);
+      console.error("Incident submit failed:", err);
       soundEngine.playChime();
-      setReported(true);
+      setReportToast({
+        success: false,
+        message: `Transmission failed: ${err.message || 'Could not reach HQ Command Center'}`
+      });
       setShowReport(false);
-      setTimeout(() => setReported(false), 3500);
+      setTimeout(() => setReportToast(null), 5000);
     }
   };
 
@@ -585,10 +605,13 @@ function App() {
         <ReportSheet onClose={() => setShowReport(false)} onSubmit={submitReport} />
       )}
 
-      {reported && (
-        <div className="toast">
-          <span><Check size={16} /></span>
-          Transmitted to HQ Command Center & Synced across all devices!
+      {reportToast && (
+        <div 
+          className="toast" 
+          style={!reportToast.success ? { background: '#991b1b', color: '#ffffff', border: '1px solid #f87171' } : {}}
+        >
+          <span>{reportToast.success ? <Check size={16} /> : <AlertTriangle size={16} />}</span>
+          {reportToast.message}
         </div>
       )}
     </main>

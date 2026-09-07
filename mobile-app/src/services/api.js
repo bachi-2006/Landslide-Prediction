@@ -87,12 +87,18 @@ export const mobileApi = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        lat: Number(latitude),
+        lon: Number(longitude),
         latitude: Number(latitude),
         longitude: Number(longitude),
+        location_query: locationName,
         location_name: locationName
       })
     });
-    if (!res.ok) throw new Error('Failed to calculate evacuation route');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to calculate evacuation route');
+    }
     return res.json();
   },
 
@@ -113,9 +119,13 @@ export const mobileApi = {
   async submitIncident(formData) {
     const res = await fetch(`${BASE_URL}/api/incidents`, {
       method: 'POST',
+      headers: { ...getAuthHeader() },
       body: formData
     });
-    if (!res.ok) throw new Error('Failed to submit incident');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to submit incident');
+    }
     return res.json();
   },
 
@@ -175,10 +185,19 @@ export const mobileApi = {
   async triggerHardware(level = 'Critical', districtId = 'IN-ML-01') {
     const res = await fetch(`${BASE_URL}/api/alert/hardware/trigger`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'active', level, district_id: districtId })
+      headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+      body: JSON.stringify({
+        active: true,
+        status: 'active',
+        level,
+        district_id: districtId,
+        message: `Disaster alert triggered for ${districtId} (${level})`
+      })
     });
-    if (!res.ok) throw new Error('Failed to trigger hardware beacon');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to trigger hardware beacon');
+    }
     return res.json();
   },
 

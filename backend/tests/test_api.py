@@ -59,3 +59,79 @@ def test_simulate_auth_guard():
             assert resp_good.status_code == 200
             assert resp_good.json()['success'] is True
     run_async(_test())
+
+def test_hardware_siren_auth_guard():
+    async def _test():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
+            # 1. Unauthenticated -> 401
+            resp_no_auth = await client.post('/api/alert/hardware/trigger', json={'active': True})
+            assert resp_no_auth.status_code == 401
+
+            # 2. Field officer auth -> 403 (Admin required)
+            resp_officer = await client.post(
+                '/api/alert/hardware/trigger',
+                json={'active': True},
+                headers={'Authorization': 'Bearer ne-shield-officer-key-2026'}
+            )
+            assert resp_officer.status_code == 403
+
+            # 3. Admin auth -> 200
+            resp_admin = await client.post(
+                '/api/alert/hardware/trigger',
+                json={'active': True, 'message': 'Simulated hardware test siren'},
+                headers={'Authorization': 'Bearer ne-shield-admin-key-2026'}
+            )
+            assert resp_admin.status_code == 200
+            assert resp_admin.json()['status'] == 'success'
+    run_async(_test())
+
+def test_evacuate_unknown_location_rejection():
+    async def _test():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
+            # Unknown location with no coords must return 400, NOT silently route to Shillong
+            resp_bad = await client.post('/api/route/evacuate', json={'location_query': 'Unknown Fictional Place 999'})
+            assert resp_bad.status_code == 400
+            assert 'could not be resolved' in resp_bad.json()['detail']
+
+            # Passing lat/lon coordinates explicitly works
+            resp_good = await client.post('/api/route/evacuate', json={'lat': 25.5788, 'lon': 91.8933})
+            assert resp_good.status_code == 200
+            assert resp_good.json()['success'] is True
+    run_async(_test())
+
+def test_incident_reporter_role_verification():
+    async def _test():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
+            # Untrusted request claiming field_officer without auth token is demoted to citizen
+            resp_unauth = await client.post(
+                '/api/incidents',
+                data={
+                    'description': 'Test hazard',
+                    'latitude': 25.57,
+                    'longitude': 91.88,
+                    'reporter_role': 'field_officer'
+                }
+            )
+            assert resp_unauth.status_code == 200
+            assert resp_unauth.json()['data']['reporter_role'] == 'citizen'
+            assert resp_unauth.json()['data']['verification_status'] == 'community_reported'
+
+            # Valid officer auth token preserves field_officer role
+            resp_auth = await client.post(
+                '/api/incidents',
+                data={
+                    'description': 'Verified slope failure',
+                    'latitude': 25.57,
+                    'longitude': 91.88,
+                    'reporter_role': 'field_officer'
+                },
+                headers={'Authorization': 'Bearer ne-shield-officer-key-2026'}
+            )
+            assert resp_auth.status_code == 200
+            assert resp_auth.json()['data']['reporter_role'] == 'field_officer'
+            assert resp_auth.json()['data']['verification_status'] == 'verified'
+    run_async(_test())
+

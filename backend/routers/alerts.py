@@ -4,11 +4,13 @@ Handles triggering and recording system alerts.
 """
 
 import os
-from fastapi import APIRouter, HTTPException, Header
+import hmac
+from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 from backend.db.supabase_client import SupabaseNotConfiguredError, get_supabase
 from backend.services.notify import send_push_notification, send_sms_alert
+from backend.services.auth import AuthUser, require_admin, verify_session
 
 router = APIRouter(prefix="/api/alert", tags=["Alerts"])
 
@@ -24,20 +26,21 @@ class BroadcastAlertRequest(BaseModel):
     channels: Optional[List[str]] = ["push", "sms"]
     phone_numbers: Optional[List[str]] = None
 
-import hmac
-
 @router.post("/broadcast")
 async def broadcast_alert(req: BroadcastAlertRequest, authorization: Optional[str] = Header(None)):
     """
     Multi-channel emergency broadcast (FCM push + SMS dispatch).
-    Requires authority authorization token.
+    Requires authority authorization token or verified Admin session.
     """
     expected_token = os.getenv("AUTHORITY_BROADCAST_KEY", "ne-shield-authority-key-2026")
     token_candidate = authorization.replace("Bearer ", "").strip() if authorization else ""
-    if not token_candidate or not hmac.compare_digest(token_candidate, expected_token):
+    is_valid_broadcast_key = bool(token_candidate and hmac.compare_digest(token_candidate, expected_token))
+    is_admin_session = bool(token_candidate and verify_session(token_candidate, required_role="admin"))
+
+    if not (is_valid_broadcast_key or is_admin_session):
         raise HTTPException(
             status_code=403,
-            detail="Unauthorized: Emergency broadcast requires valid authority credentials in Authorization header."
+            detail="Unauthorized: Emergency broadcast requires valid Admin session or authority credentials in Authorization header."
         )
     try:
         db = get_supabase()
@@ -131,15 +134,25 @@ async def test_alert(req: AlertTestRequest):
 current_alert_state = {"is_active": False, "message": ""}
 
 class HardwareTriggerRequest(BaseModel):
-    active: bool
+    active: Optional[bool] = None
+    status: Optional[str] = None
     message: Optional[str] = "Disaster Simulated!"
+    level: Optional[str] = None
+    district_id: Optional[str] = None
 
 @router.post("/hardware/trigger")
-async def trigger_hardware_siren(req: HardwareTriggerRequest):
-    """NE-SHIELD dashboard calls this when you run a simulation."""
+async def trigger_hardware_siren(req: HardwareTriggerRequest, caller: AuthUser = Depends(require_admin)):
+    """NE-SHIELD dashboard calls this when you run a simulation. Protected by Admin RBAC."""
     global current_alert_state
-    current_alert_state = {"is_active": req.active, "message": req.message}
-    return {"status": "success"}
+    is_active = req.active if req.active is not None else (req.status in ["active", "on", "true"] if req.status else True)
+    msg = req.message or f"Alert triggered for {req.district_id or 'NER'} ({req.level or 'Critical'})"
+    current_alert_state = {
+        "is_active": is_active,
+        "message": msg,
+        "triggered_by": caller.name,
+        "level": req.level or "Critical"
+    }
+    return {"status": "success", "data": current_alert_state}
 
 @router.get("/hardware/status")
 async def get_hardware_status():

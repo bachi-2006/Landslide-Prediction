@@ -69,11 +69,13 @@ export const routeService = {
 
 export const alertService = {
     testAlert: (payload) => api.post('/alert/test', payload),
-    broadcastAlert: (payload, token = 'ne-shield-authority-key-2026') =>
+    broadcastAlert: (payload, token = null) =>
         api.post('/alert/broadcast', payload, {
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            headers: token ? { 'Authorization': `Bearer ${token}` } : authHeader('admin')
         }),
-    triggerHardware: (payload) => api.post('/alert/hardware/trigger', payload),
+    triggerHardware: (payload) => api.post('/alert/hardware/trigger', payload, {
+        headers: authHeader('admin')
+    }),
 };
 
 export const deviceService = {

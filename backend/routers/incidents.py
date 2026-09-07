@@ -3,11 +3,11 @@ Incidents API Router
 Handles user-submitted incident reports, field officer responses, and resolution.
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Header
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from backend.db.supabase_client import SupabaseNotConfiguredError, get_supabase
-from backend.services.auth import require_officer, require_admin
+from backend.services.auth import require_officer, require_admin, verify_session, _extract_token
 import uuid
 import logging
 
@@ -88,20 +88,27 @@ async def create_incident(
     description: str = Form(...),
     latitude: float = Form(...),
     longitude: float = Form(...),
-    submitted_by: str = Form(...),
+    submitted_by: str = Form("Citizen (Field Report)"),
     reporter_role: str = Form("citizen"),
     severity: str = Form("Moderate"),
-    photo: UploadFile | None = File(None)
+    photo: UploadFile | None = File(None),
+    authorization: Optional[str] = Header(None)
 ):
-    """Submit a new incident report. Writes to Supabase first; falls back to memory."""
+    """Submit a new incident report. Enforces server-verified officer credentials."""
     # Input validation
     if not (-90.0 <= latitude <= 90.0) or not (-180.0 <= longitude <= 180.0):
         raise HTTPException(status_code=400, detail="Invalid GPS coordinates.")
     if len(description.strip()) < 3:
         raise HTTPException(status_code=400, detail="Description must be at least 3 characters.")
 
-    is_officer = reporter_role.lower() in ["field_officer", "officer", "inspector", "sdrf"]
-    verification_status = "verified" if is_officer else "community_reported"
+    # Secure role determination: client cannot self-claim officer status without a valid session token
+    token = _extract_token(authorization)
+    session = verify_session(token, required_role="officer") if token else None
+    is_verified_officer = bool(session and session.get("role") in ["field_officer", "officer", "admin"])
+
+    actual_role = "admin" if (is_verified_officer and session and session.get("role") == "admin") else ("field_officer" if is_verified_officer else "citizen")
+    verification_status = "verified" if is_verified_officer else "community_reported"
+    verified_assignee = session.get("name", submitted_by) if is_verified_officer else None
 
     photo_url = None
     if photo:
@@ -124,12 +131,12 @@ async def create_incident(
     new_record = {
         "id": str(uuid.uuid4()),
         "submitted_by": submitted_by,
-        "reporter_role": "field_officer" if is_officer else "citizen",
+        "reporter_role": actual_role,
         "verification_status": verification_status,
         "severity": severity,
-        "status": "in_progress" if is_officer else "open",
-        "assigned_officer": submitted_by if is_officer else None,
-        "people_responded": 1 if is_officer else 0,
+        "status": "in_progress" if is_verified_officer else "open",
+        "assigned_officer": verified_assignee,
+        "people_responded": 1 if is_verified_officer else 0,
         "people_evacuated": 0,
         "description": description,
         "latitude": latitude,
@@ -138,22 +145,40 @@ async def create_incident(
         "created_at": datetime.utcnow().isoformat() + "Z"
     }
 
-    # PRIMARY: Write to Supabase first
+    # PRIMARY: Write to Supabase using columns present in schema
     saved = False
+    db_error = None
     try:
-        resp = get_supabase().table("incidents").insert(new_record).execute()
+        db_payload = {
+            "id": new_record["id"],
+            "submitted_by": submitted_by,
+            "description": description,
+            "latitude": latitude,
+            "longitude": longitude,
+            "photo_url": photo_url,
+            "verified": is_verified_officer,
+            "created_at": new_record["created_at"]
+        }
+        resp = get_supabase().table("incidents").insert(db_payload).execute()
         if resp.data:
-            new_record = resp.data[0]  # use DB-assigned values
             saved = True
             logger.info(f"Incident {new_record['id']} persisted to Supabase.")
     except Exception as db_err:
+        db_error = str(db_err)
         logger.warning(f"Supabase write failed — using in-memory fallback: {db_err}")
 
     # FALLBACK: cache in memory if DB was unavailable
     if not saved:
         IN_MEMORY_INCIDENTS.insert(0, new_record)
 
-    return {"success": True, "data": new_record, "error": None}
+    new_record["db_persisted"] = saved
+    return {
+        "success": True,
+        "db_persisted": saved,
+        "data": new_record,
+        "warning": None if saved else "Incident queued in fallback memory; not yet committed to central database.",
+        "error": db_error
+    }
 
 
 class AssignOfficerRequest(BaseModel):
@@ -285,181 +310,3 @@ async def resolve_incident(
     IN_MEMORY_INCIDENTS.append(placeholder)
     return {"success": True, "data": placeholder, "error": None}
 
-
-@router.get("")
-@router.get("/")
-async def get_incidents():
-    """Returns all submitted incidents."""
-    try:
-        response = get_supabase().table("incidents").select("*").order("created_at", desc=True).execute()
-        # Merge Supabase records with any locally submitted ones
-        supabase_ids = {r["id"] for r in (response.data or []) if "id" in r}
-        merged = []
-        for r in (response.data or []):
-            item = dict(r)
-            if not item.get("reporter_role"):
-                s_by = (item.get("submitted_by") or "").lower()
-                if "officer" in s_by or "patrol" in s_by or "sdrf" in s_by or "inspector" in s_by:
-                    item["reporter_role"] = "field_officer"
-                    item["verification_status"] = "verified"
-                else:
-                    item["reporter_role"] = "citizen"
-                    item["verification_status"] = "community_reported"
-            merged.append(item)
-
-        for inc in IN_MEMORY_INCIDENTS:
-            if inc["id"] not in supabase_ids:
-                merged.append(inc)
-        return {"success": True, "data": merged, "error": None}
-    except Exception as e:
-        logger.info(f"Supabase offline, returning in-memory incidents: {e}")
-        return {"success": True, "data": IN_MEMORY_INCIDENTS, "error": None}
-
-@router.post("")
-@router.post("/")
-async def create_incident(
-    description: str = Form(...),
-    latitude: float = Form(...),
-    longitude: float = Form(...),
-    submitted_by: str = Form(...),
-    reporter_role: str = Form("citizen"),
-    severity: str = Form("Moderate"),
-    photo: UploadFile | None = File(None)
-):
-    # Input bounds validation for geospatial coordinates
-    if not (-90.0 <= latitude <= 90.0) or not (-180.0 <= longitude <= 180.0):
-        raise HTTPException(status_code=400, detail="Invalid GPS coordinates. Latitude must be [-90, 90] and Longitude [-180, 180].")
-
-    if len(description.strip()) < 3:
-        raise HTTPException(status_code=400, detail="Incident description must be at least 3 characters long.")
-
-    # Role validation and verification flag
-    is_officer = reporter_role.lower() in ["field_officer", "officer", "inspector", "sdrf"]
-    verification_status = "verified" if is_officer else "community_reported"
-
-    photo_url = None
-    if photo:
-        file_ext = (photo.filename or "image.jpg").split(".")[-1].lower()
-        if file_ext in ["jpg", "jpeg", "png", "webp"]:
-            content = await photo.read()
-            if len(content) <= 5 * 1024 * 1024:
-                try:
-                    file_path = f"incidents/{uuid.uuid4()}.{file_ext}"
-                    db = get_supabase()
-                    db.storage.from_("incidents").upload(
-                        path=file_path,
-                        file=content,
-                        options={"content-type": photo.content_type or "image/jpeg"},
-                    )
-                    photo_url = db.storage.from_("incidents").get_public_url(file_path)
-                except Exception as upload_err:
-                    logger.warning(f"Photo upload to Supabase storage skipped: {upload_err}")
-
-    new_record = {
-        "id": str(uuid.uuid4()),
-        "submitted_by": submitted_by,
-        "reporter_role": "field_officer" if is_officer else "citizen",
-        "verification_status": verification_status,
-        "severity": severity,
-        "status": "in_progress" if is_officer else "open",
-        "assigned_officer": submitted_by if is_officer else None,
-        "people_responded": 1 if is_officer else 0,
-        "people_evacuated": 0,
-        "description": description,
-        "latitude": latitude,
-        "longitude": longitude,
-        "photo_url": photo_url,
-        "created_at": datetime.utcnow().isoformat() + "Z"
-    }
-
-    # Store in memory immediately so desktop sees it instantly
-    IN_MEMORY_INCIDENTS.insert(0, new_record)
-
-    # Also persist to Supabase if configured
-    try:
-        get_supabase().table("incidents").insert(new_record).execute()
-    except Exception as db_err:
-        logger.info(f"Supabase DB insert skipped: {db_err}")
-
-    return {"success": True, "data": new_record, "error": None}
-
-class AssignOfficerRequest(BaseModel):
-    officer_name: str
-    officer_unit: Optional[str] = "SDRF Rapid Response"
-    dispatched_personnel: Optional[int] = 4
-
-@router.post("/{incident_id}/assign")
-async def assign_incident(incident_id: str, req: AssignOfficerRequest):
-    """Admin assigns field officer to an incident."""
-    for inc in IN_MEMORY_INCIDENTS:
-        if inc["id"] == incident_id:
-            inc["assigned_officer"] = f"{req.officer_name} ({req.officer_unit})"
-            inc["status"] = "assigned"
-            inc["dispatched_personnel"] = req.dispatched_personnel
-            inc["assigned_at"] = datetime.utcnow().isoformat() + "Z"
-            return {"success": True, "data": inc, "error": None}
-
-    # Create / update in memory if legacy ID
-    updated = {
-        "id": incident_id,
-        "assigned_officer": f"{req.officer_name} ({req.officer_unit})",
-        "status": "assigned",
-        "dispatched_personnel": req.dispatched_personnel,
-        "assigned_at": datetime.utcnow().isoformat() + "Z"
-    }
-    IN_MEMORY_INCIDENTS.insert(0, updated)
-    return {"success": True, "data": updated, "error": None}
-
-class RespondIncidentRequest(BaseModel):
-    response_type: str = "safe" # "safe" | "evacuated" | "needs_help"
-    citizen_name: Optional[str] = "Community Resident"
-
-@router.post("/{incident_id}/respond")
-async def register_community_response(incident_id: str, req: RespondIncidentRequest):
-    """
-    Citizen or Field Officer registers response to an active incident
-    ('I Am Safe', 'Evacuated to Shelter', 'Assistance Needed').
-    """
-    for inc in IN_MEMORY_INCIDENTS:
-        if inc["id"] == incident_id:
-            inc["people_responded"] = inc.get("people_responded", 0) + 1
-            if req.response_type == "evacuated":
-                inc["people_evacuated"] = inc.get("people_evacuated", 0) + 1
-            return {"success": True, "data": inc, "error": None}
-
-    # If legacy record not in memory
-    updated = {
-        "id": incident_id,
-        "people_responded": 1,
-        "people_evacuated": 1 if req.response_type == "evacuated" else 0
-    }
-    IN_MEMORY_INCIDENTS.append(updated)
-    return {"success": True, "data": updated, "error": None}
-
-class ResolveIncidentRequest(BaseModel):
-    officer_name: str
-    resolution_summary: str
-    road_cleared: bool = True
-
-@router.post("/{incident_id}/resolve")
-async def resolve_incident(incident_id: str, req: ResolveIncidentRequest):
-    """Field officer closes an issue and confirms ground clearance."""
-    for inc in IN_MEMORY_INCIDENTS:
-        if inc["id"] == incident_id:
-            inc["status"] = "resolved"
-            inc["resolved_by"] = req.officer_name
-            inc["resolution_summary"] = req.resolution_summary
-            inc["road_cleared"] = req.road_cleared
-            inc["resolved_at"] = datetime.utcnow().isoformat() + "Z"
-            return {"success": True, "data": inc, "error": None}
-
-    updated = {
-        "id": incident_id,
-        "status": "resolved",
-        "resolved_by": req.officer_name,
-        "resolution_summary": req.resolution_summary,
-        "road_cleared": req.road_cleared,
-        "resolved_at": datetime.utcnow().isoformat() + "Z"
-    }
-    IN_MEMORY_INCIDENTS.append(updated)
-    return {"success": True, "data": updated, "error": None}

@@ -213,6 +213,9 @@ class EvacuationPromptRequest(BaseModel):
     location_query: Optional[str] = None
     lat: Optional[float] = None
     lon: Optional[float] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    location_name: Optional[str] = None
 
 # Known reference locations in NER for text geocoding
 NER_KNOWN_LOCATIONS = {
@@ -237,12 +240,13 @@ async def calculate_location_evacuation(req: EvacuationPromptRequest):
     Runs localized landslide prediction and matches the nearest safe emergency shelter.
     Generates uphill safe evacuation corridor and personalized NDMA precautions.
     """
-    target_lat = req.lat
-    target_lon = req.lon
-    resolved_name = req.location_query or "Inspected Location"
+    target_lat = req.lat if req.lat is not None else req.latitude
+    target_lon = req.lon if req.lon is not None else req.longitude
+    query_text = req.location_query or req.location_name
+    resolved_name = query_text or "Inspected Location"
 
-    if (target_lat is None or target_lon is None) and req.location_query:
-        query_clean = req.location_query.lower().strip()
+    if (target_lat is None or target_lon is None) and query_text:
+        query_clean = query_text.lower().strip()
         matched = None
         for key, coords in NER_KNOWN_LOCATIONS.items():
             if key in query_clean:
@@ -251,12 +255,16 @@ async def calculate_location_evacuation(req: EvacuationPromptRequest):
         if matched:
             target_lat, target_lon, resolved_name = matched
         else:
-            # Default to East Khasi Hills Shillong coordinates
-            target_lat, target_lon = 25.5788, 91.8933
-            resolved_name = f"{req.location_query} (NER Region)"
+            raise HTTPException(
+                status_code=400,
+                detail=f"Location '{query_text}' could not be resolved to GPS coordinates. Please select a recognized NER location or provide coordinates."
+            )
 
     if target_lat is None or target_lon is None:
-        target_lat, target_lon = 25.5788, 91.8933
+        raise HTTPException(
+            status_code=400,
+            detail="Latitude and longitude coordinates (or recognized location name) are required for evacuation routing."
+        )
 
     # 1. Match nearest shelter
     shelters = list(EMERGENCY_SHELTERS)
