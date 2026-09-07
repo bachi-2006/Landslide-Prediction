@@ -14,8 +14,8 @@ export const getApiBaseUrl = () => {
       return ''; // Vite proxy forwards /api to backend
     }
   }
-  // Android Capacitor default (host IP or emulator loopback)
-  return 'http://10.82.15.222:8000';
+  // Live Cloud Backend (Render HTTPS)
+  return 'https://ne-shield-api.onrender.com';
 };
 
 // Dynamic Base URL resolver that checks custom settings on each call
