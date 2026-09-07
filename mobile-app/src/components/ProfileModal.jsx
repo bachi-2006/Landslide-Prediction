@@ -9,7 +9,7 @@ export default function ProfileModal({ onClose, isOnline }) {
   const [district, setDistrict] = useState(() => localStorage.getItem('ne_user_district') || 'East Khasi Hills');
   const [role, setRole] = useState(() => localStorage.getItem('neshield_user_role') || 'citizen');
   const [password, setPassword] = useState('');
-  const [apiHost, setApiHost] = useState(() => localStorage.getItem('neshield_api_host') || 'http://10.82.15.222:8000');
+  const [apiHost, setApiHost] = useState(() => localStorage.getItem('neshield_api_host') || 'https://ne-shield-api.onrender.com');
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
