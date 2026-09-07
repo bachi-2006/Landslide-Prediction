@@ -310,3 +310,124 @@ async def resolve_incident(
     IN_MEMORY_INCIDENTS.append(placeholder)
     return {"success": True, "data": placeholder, "error": None}
 
+
+# ─────────────────────────────────────────────────────────────
+# ADMIN: Delete Incident
+# ─────────────────────────────────────────────────────────────
+
+@router.delete("/{incident_id}")
+async def delete_incident(
+    incident_id: str,
+    caller=Depends(require_admin),
+):
+    """Admin only: permanently delete a false / duplicate / test incident."""
+    deleted_from_db = False
+    try:
+        get_supabase().table("incidents").delete().eq("id", incident_id).execute()
+        deleted_from_db = True
+        logger.info(f"Admin {caller.name} deleted incident {incident_id} from Supabase.")
+    except Exception as db_err:
+        logger.warning(f"Supabase delete failed: {db_err}")
+
+    # Remove from in-memory fallback too
+    global IN_MEMORY_INCIDENTS
+    before = len(IN_MEMORY_INCIDENTS)
+    IN_MEMORY_INCIDENTS = [i for i in IN_MEMORY_INCIDENTS if i.get("id") != incident_id]
+    deleted_from_memory = len(IN_MEMORY_INCIDENTS) < before
+
+    if not deleted_from_db and not deleted_from_memory:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found.")
+
+    return {
+        "success": True,
+        "deleted_id": incident_id,
+        "deleted_by": caller.name,
+        "db_deleted": deleted_from_db,
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# ADMIN: Force-Create a Verified Incident
+# ─────────────────────────────────────────────────────────────
+
+class AdminIncidentRequest(BaseModel):
+    description: str
+    latitude: float
+    longitude: float
+    severity: Optional[str] = "High"
+    assigned_officer: Optional[str] = None
+    officer_unit: Optional[str] = None
+    dispatched_personnel: Optional[int] = 4
+    notes: Optional[str] = None
+
+
+@router.post("/admin/create")
+async def admin_create_incident(
+    req: AdminIncidentRequest,
+    caller=Depends(require_admin),
+):
+    """
+    Admin creates a pre-verified incident directly from HQ.
+    Status is 'in_progress' if officer assigned, else 'open'. Marked verified=True.
+    """
+    admin_name = getattr(caller, "name", "SEOC Admin")
+    new_record = {
+        "id": str(uuid.uuid4()),
+        "submitted_by": f"HQ Admin: {admin_name}",
+        "reporter_role": "admin",
+        "verification_status": "admin_verified",
+        "severity": req.severity or "High",
+        "status": "in_progress" if req.assigned_officer else "open",
+        "assigned_officer": f"{req.assigned_officer} ({req.officer_unit})" if req.assigned_officer and req.officer_unit else req.assigned_officer,
+        "assigned_by": admin_name,
+        "officer_unit": req.officer_unit,
+        "dispatched_personnel": req.dispatched_personnel or 4,
+        "people_responded": req.dispatched_personnel or 0,
+        "people_evacuated": 0,
+        "description": req.description,
+        "latitude": req.latitude,
+        "longitude": req.longitude,
+        "photo_url": None,
+        "resolution_notes": req.notes,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+    saved = False
+    try:
+        db_payload = {
+            "id": new_record["id"],
+            "submitted_by": new_record["submitted_by"],
+            "description": new_record["description"],
+            "latitude": new_record["latitude"],
+            "longitude": new_record["longitude"],
+            "photo_url": None,
+            "verified": True,
+            "status": new_record["status"],
+            "reporter_role": "admin",
+            "verification_status": "admin_verified",
+            "severity": new_record["severity"],
+            "assigned_officer": new_record["assigned_officer"],
+            "assigned_by": admin_name,
+            "officer_unit": req.officer_unit,
+            "dispatched_personnel": req.dispatched_personnel,
+            "people_responded": new_record["people_responded"],
+            "people_evacuated": 0,
+            "created_at": new_record["created_at"],
+        }
+        resp = get_supabase().table("incidents").insert(db_payload).execute()
+        if resp.data:
+            saved = True
+            logger.info(f"Admin {admin_name} created incident {new_record['id']} in Supabase.")
+    except Exception as db_err:
+        logger.warning(f"Supabase admin-create failed — using in-memory: {db_err}")
+
+    if not saved:
+        IN_MEMORY_INCIDENTS.insert(0, new_record)
+
+    new_record["db_persisted"] = saved
+    return {
+        "success": True,
+        "db_persisted": saved,
+        "data": new_record,
+        "created_by": admin_name,
+    }

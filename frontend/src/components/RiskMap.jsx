@@ -7,6 +7,7 @@ import { subscribeToMapUpdates } from '../services/supabase';
 import { Layers, MapPin, History, Eye, EyeOff, Navigation, Radio, Activity, ShieldCheck, BarChart3, AlertOctagon } from 'lucide-react';
 import PointAnalyticsModal from './PointAnalyticsModal';
 import { soundEngine } from '../services/soundEngine';
+import { rbac } from '../services/rbac';
 
 // Fix for Leaflet default marker icons
 delete L.Icon.Default.prototype._getIconUrl;
@@ -45,6 +46,23 @@ const officerVerifiedIcon = L.divIcon({
     iconAnchor: [17, 34],
     popupAnchor: [0, -34]
 });
+
+// Admin-only: green officer deployment pin (shows assigned officer at incident location)
+const officerDeploymentIcon = L.divIcon({
+    className: 'custom-deployment-pin',
+    html: `
+        <div style="position: relative; width: 36px; height: 36px;">
+            <div style="position: absolute; inset: -5px; background: rgba(16, 185, 129, 0.3); border-radius: 50%; animation: ping 2.5s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
+            <div style="width: 34px; height: 34px; background: linear-gradient(135deg, #059669, #10b981); border: 2.5px solid #fbbf24; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 4px 14px rgba(5, 150, 105, 0.7); display: flex; align-items: center; justify-content: center;">
+                <div style="transform: rotate(45deg); font-size: 15px;">👮</div>
+            </div>
+        </div>
+    `,
+    iconSize: [36, 36],
+    iconAnchor: [18, 36],
+    popupAnchor: [0, -36]
+});
+
 
 const riskColors = {
     'Low': '#22c55e',
@@ -311,36 +329,63 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded, activeR
 
                 <MapEventsClickHandler onMapClick={handleMapClick} />
 
-                {/* Dropped Inspection Pin */}
+                {/* Dropped Inspection Pin — role-aware popup */}
                 {inspectedPoint && (
                     <Marker position={[inspectedPoint.lat, inspectedPoint.lon]} icon={inspectionIcon}>
                         <Popup autoPan={true}>
                             <div className="p-3 max-w-[260px] text-xs font-sans">
                                 <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-2">
                                     <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black px-2 py-0.5 rounded-full uppercase">
-                                        Inspection Point
+                                        {activeRole === 'citizen' ? 'Dropped Pin' : 'Inspection Point'}
                                     </span>
                                     <span className="font-mono text-[10px] text-slate-400">
-                                        {Number(inspectedPoint.lat).toFixed(3)}°, {Number(inspectedPoint.lon).toFixed(3)}°
+                                        {Number(inspectedPoint.lat).toFixed(4)}°, {Number(inspectedPoint.lon).toFixed(4)}°
                                     </span>
                                 </div>
-                                <p className="text-slate-600 text-[11px] mb-3">
-                                    Calculate micro-site topographical slope, weather telemetry and live XGBoost risk percentage at this exact point.
-                                </p>
-                                <button
-                                    onClick={() => setAnalyticsModalData({
-                                        lat: inspectedPoint.lat,
-                                        lon: inspectedPoint.lon,
-                                        label: 'Direct Map Pin'
-                                    })}
-                                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
-                                >
-                                    <BarChart3 size={14} />
-                                    <span>Calculate Real-Time Analytics</span>
-                                </button>
+
+                                {/* CITIZEN: Report hazard + safe route — NO analytics */}
+                                {activeRole === 'citizen' && (
+                                    <div className="space-y-2">
+                                        <p className="text-slate-600 text-[11px]">
+                                            📍 Pin dropped at this location. You can report a hazard here or find your nearest safe route.
+                                        </p>
+                                        <button
+                                            onClick={() => {
+                                                // Pre-fill IncidentForm with these coordinates — emit event for parent
+                                                window.dispatchEvent(new CustomEvent('ne_open_report_at', {
+                                                    detail: { lat: inspectedPoint.lat, lon: inspectedPoint.lon }
+                                                }));
+                                            }}
+                                            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                                        >
+                                            🚨 Report Hazard Here
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* OFFICER / ADMIN: Full analytics */}
+                                {(activeRole === 'field_officer' || activeRole === 'admin') && (
+                                    <div className="space-y-2">
+                                        <p className="text-slate-600 text-[11px] mb-2">
+                                            Calculate micro-site topographical slope, weather telemetry and live XGBoost risk percentage at this exact point.
+                                        </p>
+                                        <button
+                                            onClick={() => setAnalyticsModalData({
+                                                lat: inspectedPoint.lat,
+                                                lon: inspectedPoint.lon,
+                                                label: 'Direct Map Pin'
+                                            })}
+                                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                                        >
+                                            <BarChart3 size={14} />
+                                            <span>Calculate Real-Time Analytics</span>
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         </Popup>
                     </Marker>
+
                 )}
 
                 {showIncidents && incidents.map(inc => {
@@ -451,19 +496,21 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded, activeR
                                         )}
                                     </div>
 
-                                    {/* Real-Time Analytics & Risk Calculation CTA */}
-                                    <button
-                                        onClick={() => setAnalyticsModalData({
-                                            lat: inc.latitude,
-                                            lon: inc.longitude,
-                                            label: `${isOfficer ? 'Officer Hazard' : 'Citizen Hazard'}: ${inc.description.slice(0, 25)}...`,
-                                            incidentInfo: inc
-                                        })}
-                                        className="w-full mb-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
-                                    >
-                                        <BarChart3 size={14} className={isOfficer ? "text-blue-400" : "text-red-400"} />
-                                        <span>Calculate Regional & Point Analytics</span>
-                                    </button>
+                                    {/* Real-Time Analytics & Risk Calculation CTA — Restricted to Field Officers & Admins */}
+                                    {rbac.hasPermission(activeRole, 'canViewAnalytics') && (
+                                        <button
+                                            onClick={() => setAnalyticsModalData({
+                                                lat: inc.latitude,
+                                                lon: inc.longitude,
+                                                label: `${isOfficer ? 'Officer Hazard' : 'Citizen Hazard'}: ${inc.description.slice(0, 25)}...`,
+                                                incidentInfo: inc
+                                            })}
+                                            className="w-full mb-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                                        >
+                                            <BarChart3 size={14} className={isOfficer ? "text-blue-400" : "text-red-400"} />
+                                            <span>Calculate Regional & Point Analytics</span>
+                                        </button>
+                                    )}
 
                                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
                                         <span className="text-emerald-600 font-bold flex items-center gap-1">
@@ -476,6 +523,36 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded, activeR
                         </Marker>
                     );
                 })}
+
+                {/* ADMIN ONLY: Officer Deployment Tracking Layer (Feature A) */}
+                {rbac.hasPermission(activeRole, 'canViewOfficerLayer') && incidents
+                    .filter(inc => inc.assigned_officer && inc.status !== 'resolved' && inc.status !== 'closed')
+                    .map(inc => (
+                        <Marker
+                            key={`officer-deploy-${inc.id}`}
+                            position={[Number(inc.latitude) + 0.0012, Number(inc.longitude) + 0.0012]}
+                            icon={officerDeploymentIcon}
+                        >
+                            <Popup className="officer-deploy-popup">
+                                <div className="p-3 max-w-[260px] text-xs font-sans">
+                                    <div className="flex items-center justify-between border-b border-emerald-100 pb-1.5 mb-2">
+                                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full uppercase flex items-center gap-1">
+                                            👮 Assigned Field Officer
+                                        </span>
+                                        <span className="text-[10px] text-emerald-600 font-bold">Patrol Active</span>
+                                    </div>
+                                    <h4 className="font-extrabold text-slate-900 text-sm mb-1">{inc.assigned_officer}</h4>
+                                    <p className="text-slate-600 text-[11px] mb-2 bg-emerald-50/50 p-2 rounded-lg border border-emerald-200">
+                                        <strong>Sector Hazard:</strong> {inc.description}
+                                    </p>
+                                    <div className="text-[10px] text-slate-500 space-y-1">
+                                        <div>📍 Target Location: {Number(inc.latitude).toFixed(4)}°, {Number(inc.longitude).toFixed(4)}°</div>
+                                        <div>⚡ Triage Status: <span className="uppercase font-bold text-blue-700">{inc.status || 'in_progress'}</span></div>
+                                    </div>
+                                </div>
+                            </Popup>
+                        </Marker>
+                    ))}
             </MapContainer>
 
             {/* GIS Floating Control & Legend Panel */}

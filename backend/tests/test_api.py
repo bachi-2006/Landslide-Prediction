@@ -204,3 +204,72 @@ def test_relief_requests():
     run_async(_test())
 
 
+def test_admin_create_and_delete_incident():
+    async def _test():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
+            # Login as Admin (password 99)
+            login_resp = await client.post('/api/auth/login', json={'role': 'admin', 'password': '99', 'name': 'Commander Roy'})
+            assert login_resp.status_code == 200
+            admin_token = login_resp.json()['token']
+
+            # 1. Admin creates pre-verified incident
+            create_resp = await client.post(
+                '/api/incidents/admin/create',
+                headers={'Authorization': f'Bearer {admin_token}'},
+                json={
+                    'description': 'Admin Verified: Hillside erosion block on NH-40',
+                    'latitude': 25.5910,
+                    'longitude': 91.8920,
+                    'severity': 'Critical',
+                    'assigned_officer': 'Inspector H. Lyngdoh',
+                    'officer_unit': 'SDRF Patrol Alpha',
+                    'dispatched_personnel': 6
+                }
+            )
+            assert create_resp.status_code == 200
+            inc_data = create_resp.json()
+            assert inc_data['success'] is True
+            inc_id = inc_data['data']['id']
+            assert inc_data['data']['reporter_role'] == 'admin'
+            assert inc_data['data']['verification_status'] == 'admin_verified'
+            assert inc_data['data']['status'] == 'in_progress'
+
+            # 2. Non-admin (officer or citizen) cannot delete incident -> 403
+            off_login = await client.post('/api/auth/login', json={'role': 'field_officer', 'password': '9', 'name': 'Officer Test'})
+            off_token = off_login.json()['token']
+            del_bad = await client.delete(
+                f'/api/incidents/{inc_id}',
+                headers={'Authorization': f'Bearer {off_token}'}
+            )
+            assert del_bad.status_code == 403
+
+            # 3. Admin successfully deletes incident -> 200
+            del_good = await client.delete(
+                f'/api/incidents/{inc_id}',
+                headers={'Authorization': f'Bearer {admin_token}'}
+            )
+            assert del_good.status_code == 200
+            assert del_good.json()['success'] is True
+            assert del_good.json()['deleted_id'] == inc_id
+    run_async(_test())
+
+
+def test_session_token_restart_safe():
+    from backend.services.auth import create_session, verify_session, ACTIVE_SESSIONS
+    # 1. Issue admin token
+    token = create_session('admin', user_name='HQ Commander Dave', district='East Khasi Hills')
+    assert token.startswith('neshield_adm_')
+
+    # 2. Simulate server restart by clearing in-memory session cache
+    ACTIVE_SESSIONS.clear()
+    assert token not in ACTIVE_SESSIONS
+
+    # 3. Verify session still validates via HMAC signature and restores user profile
+    session = verify_session(token, required_role='admin')
+    assert session is not None
+    assert session['role'] == 'admin'
+    assert session['name'] == 'HQ Commander Dave'
+    assert session['district'] == 'East Khasi Hills'
+
+

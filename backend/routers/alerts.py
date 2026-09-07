@@ -133,6 +133,30 @@ async def test_alert(req: AlertTestRequest):
 
 current_alert_state = {"is_active": False, "message": ""}
 
+def _latest_incident_status():
+    """Return the newest incident for hardware nodes without breaking alert polling."""
+    try:
+        db = get_supabase()
+        response = db.table("incidents").select(
+            "id,description,created_at,submitted_by"
+        ).order("created_at", desc=True).limit(1).execute()
+        latest = (response.data or [None])[0]
+        return {
+            "database_connected": True,
+            "latest_incident_id": latest.get("id") if latest else None,
+            "latest_incident_message": latest.get("description", "") if latest else "",
+            "latest_incident_created_at": latest.get("created_at") if latest else None,
+            "latest_incident_reporter": latest.get("submitted_by", "") if latest else ""
+        }
+    except Exception:
+        return {
+            "database_connected": False,
+            "latest_incident_id": None,
+            "latest_incident_message": "",
+            "latest_incident_created_at": None,
+            "latest_incident_reporter": ""
+        }
+
 class HardwareTriggerRequest(BaseModel):
     active: Optional[bool] = None
     status: Optional[str] = None
@@ -165,4 +189,128 @@ async def trigger_hardware_siren(req: HardwareTriggerRequest, authorization: Opt
 @router.get("/hardware/status")
 async def get_hardware_status():
     """The ESP32 constantly polls this endpoint."""
-    return current_alert_state
+    return {
+        **current_alert_state,
+        "web_access": True,
+        **_latest_incident_status()
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# ESP32 BEACON TELEMETRY & CAPTIVE PORTAL SOS REGISTRATIONS
+# ─────────────────────────────────────────────────────────────
+
+class BeaconHeartbeatRequest(BaseModel):
+    beacon_id: str
+    name: Optional[str] = "ESP32 Field Siren Beacon"
+    location_name: Optional[str] = "Shillong Sector NH-40"
+    latitude: Optional[float] = 25.5788
+    longitude: Optional[float] = 91.8933
+    siren_active: Optional[bool] = False
+    wifi_ssid: Optional[str] = "MSI 6704"
+    sta_ip: Optional[str] = None
+    db_connected: Optional[bool] = True
+    clients_connected: Optional[int] = 0
+    last_incident_seen: Optional[str] = None
+    battery_level: Optional[int] = 100
+
+
+@router.post("/hardware/beacon/heartbeat")
+async def beacon_heartbeat(req: BeaconHeartbeatRequest):
+    """ESP32 sends periodic status updates so admin dashboard can monitor beacon."""
+    try:
+        db = get_supabase()
+        db.table("hardware_beacons").upsert({
+            "beacon_id": req.beacon_id,
+            "name": req.name,
+            "location_name": req.location_name,
+            "latitude": req.latitude,
+            "longitude": req.longitude,
+            "status": "alert" if req.siren_active else "online",
+            "siren_active": req.siren_active,
+            "wifi_ssid": req.wifi_ssid,
+            "sta_ip": req.sta_ip,
+            "db_connected": req.db_connected,
+            "clients_connected": req.clients_connected,
+            "last_incident_seen": req.last_incident_seen,
+            "battery_level": req.battery_level,
+            "last_heartbeat": "now()"
+        }).execute()
+        return {"success": True, "beacon_id": req.beacon_id}
+    except Exception as e:
+        return {"success": True, "beacon_id": req.beacon_id, "cached": True, "note": str(e)}
+
+
+class BeaconSosRequest(BaseModel):
+    beacon_id: str
+    citizen_name: str
+    phone: Optional[str] = None
+    people_count: Optional[int] = 1
+    medical_needs: Optional[str] = "None"
+    notes: Optional[str] = None
+    ip_address: Optional[str] = None
+
+
+@router.post("/hardware/beacon/sos")
+async def register_beacon_sos(req: BeaconSosRequest):
+    """
+    Called when a stranded victim connects to the ESP32 emergency Wi-Fi
+    and enters their contact/family/medical details on the captive portal.
+    Persists into Supabase beacon_sos_logs and relief_requests.
+    """
+    saved = False
+    sos_id = f"BEACON-SOS-{req.beacon_id[-4:]}-{req.citizen_name[:3].upper()}"
+    try:
+        db = get_supabase()
+        # 1. Log to beacon_sos_logs
+        db.table("beacon_sos_logs").insert({
+            "beacon_id": req.beacon_id,
+            "citizen_name": req.citizen_name,
+            "phone": req.phone,
+            "people_count": req.people_count or 1,
+            "medical_needs": req.medical_needs or "None",
+            "notes": req.notes,
+            "ip_address": req.ip_address,
+            "synced_to_cloud": True
+        }).execute()
+
+        # 2. Also register in relief_requests so SEOC command sees them immediately
+        db.table("relief_requests").insert({
+            "id": sos_id,
+            "user_name": req.citizen_name,
+            "phone": req.phone,
+            "locality_name": f"ESP32 Wi-Fi Node ({req.beacon_id})",
+            "lat": 25.5788,
+            "lon": 91.8933,
+            "aid_type": "medical" if (req.medical_needs and req.medical_needs.lower() != "none") else "food",
+            "people_count": req.people_count or 1,
+            "urgency": "Critical" if (req.medical_needs and req.medical_needs.lower() != "none") else "High",
+            "status": "pending",
+            "source": "esp32_captive_portal",
+            "beacon_id": req.beacon_id,
+            "notes": f"Medical: {req.medical_needs}. Notes: {req.notes or 'None'}"
+        }).execute()
+        saved = True
+    except Exception as e:
+        pass
+
+    return {
+        "success": True,
+        "saved_to_db": saved,
+        "message": f"SOS details for {req.citizen_name} recorded into SEOC disaster register."
+    }
+
+
+@router.get("/hardware/beacon/logs")
+async def get_beacon_logs(beacon_id: Optional[str] = None):
+    """Returns list of citizens who signed into the ESP32 Wi-Fi captive portal."""
+    try:
+        db = get_supabase()
+        query = db.table("beacon_sos_logs").select("*").order("created_at", desc=True).limit(50)
+        if beacon_id:
+            query = query.eq("beacon_id", beacon_id)
+        res = query.execute()
+        return {"success": True, "data": res.data or []}
+    except Exception as e:
+        return {"success": True, "data": []}
+

@@ -1052,6 +1052,9 @@ class ReliefAidRequest(BaseModel):
     people_count: int = 1
     urgency: str = "High"   # "Normal", "High", "Critical"
     notes: Optional[str] = None
+    source: str = "web"
+    node_id: Optional[str] = None
+    wifi_ssid: Optional[str] = None
 
 @router.post("/relief-requests")
 async def create_relief_request(req: ReliefAidRequest):
@@ -1073,6 +1076,9 @@ async def create_relief_request(req: ReliefAidRequest):
         "status": "pending",
         "dispatched_centre": None,
         "notes": req.notes or "",
+        "source": req.source,
+        "node_id": req.node_id,
+        "wifi_ssid": req.wifi_ssid,
         "created_at": datetime.utcnow().isoformat() + "Z"
     }
 

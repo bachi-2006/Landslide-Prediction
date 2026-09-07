@@ -53,15 +53,22 @@ export const incidentService = {
     }),
     /** Requires Admin auth */
     assignIncident: (id, payload) => api.post(`/incidents/${id}/assign`, payload, {
-        headers: authHeader('admin')
+        headers: authHeader()
     }),
     /** No auth required — open to all users */
     respondIncident: (id, payload) => api.post(`/incidents/${id}/respond`, payload),
     /** Requires Officer or Admin auth */
-    resolveIncident: (id, payload, role = 'field_officer') =>
-        api.post(`/incidents/${id}/resolve`, payload, {
-            headers: authHeader(role)
-        }),
+    resolveIncident: (id, payload) => api.post(`/incidents/${id}/resolve`, payload, {
+        headers: authHeader()
+    }),
+    /** Requires Admin auth — permanently delete an incident */
+    deleteIncident: (id) => api.delete(`/incidents/${id}`, {
+        headers: authHeader()
+    }),
+    /** Requires Admin auth — force-create a pre-verified incident from HQ */
+    adminCreateIncident: (payload) => api.post('/incidents/admin/create', payload, {
+        headers: authHeader()
+    }),
 };
 
 export const routeService = {
@@ -79,12 +86,15 @@ export const alertService = {
     testAlert: (payload) => api.post('/alert/test', payload),
     broadcastAlert: (payload, token = null) =>
         api.post('/alert/broadcast', payload, {
-            headers: token ? { 'Authorization': `Bearer ${token}` } : authHeader('admin')
+            headers: token ? { 'Authorization': `Bearer ${token}` } : authHeader()
         }),
     triggerHardware: (payload) => api.post('/alert/hardware/trigger', payload, {
-        headers: authHeader('admin')
+        headers: authHeader()
     }),
+    getHardwareStatus: () => api.get('/alert/hardware/status'),
+    getBeaconLogs: () => api.get('/alert/hardware/beacon/logs'),
 };
+
 
 export const deviceService = {
     registerToken: (token, districtId = null) =>

@@ -1,8 +1,6 @@
 -- =============================================================================
---  NE-SHIELD: COMPLETE UNIFIED SUPABASE DATABASE SCHEMA
+--  NE-SHIELD: COMPLETE UNIFIED DATABASE MIGRATION & SCHEMA
 --  Smart India Hackathon (SIH) 2026
---  Combines District Risk, Incidents, Triage RBAC, SOS Relief, Historical Data,
---  ESP32 Hardware Beacon Management, Captive Portal Logs, Storage & Realtime.
 -- =============================================================================
 
 -- 1. Enable UUID Extension
@@ -130,7 +128,7 @@ CREATE TABLE IF NOT EXISTS public.hardware_beacons (
     location_name TEXT DEFAULT 'North-East Field Node',
     latitude DOUBLE PRECISION DEFAULT 25.5788,
     longitude DOUBLE PRECISION DEFAULT 91.8933,
-    status TEXT DEFAULT 'online', -- 'online' | 'offline' | 'alert'
+    status TEXT DEFAULT 'online',
     siren_active BOOLEAN DEFAULT false,
     siren_level TEXT DEFAULT 'Critical',
     siren_message TEXT DEFAULT 'Emergency Siren Warning',
@@ -144,12 +142,11 @@ CREATE TABLE IF NOT EXISTS public.hardware_beacons (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Pre-seed default beacon
 INSERT INTO public.hardware_beacons (beacon_id, name, location_name, latitude, longitude, status, siren_active, db_connected)
 VALUES ('ESP32-OFFGRID-01', 'HQ Field Siren Beacon #1', 'Shillong Sector NH-40', 25.5788, 91.8933, 'online', false, true)
 ON CONFLICT (beacon_id) DO NOTHING;
 
--- 8. ESP32 Captive Portal SOS Registrations (Direct user input through beacon Wi-Fi)
+-- 8. ESP32 Captive Portal SOS Registrations
 CREATE TABLE IF NOT EXISTS public.beacon_sos_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     beacon_id TEXT NOT NULL DEFAULT 'ESP32-OFFGRID-01',
@@ -182,7 +179,7 @@ CREATE TABLE IF NOT EXISTS public.fcm_tokens (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 11. Persistent Auth Sessions (Restart-Safe Invalidation)
+-- 11. Persistent Auth Sessions
 CREATE TABLE IF NOT EXISTS public.auth_sessions (
     token TEXT PRIMARY KEY,
     role TEXT NOT NULL,
@@ -212,17 +209,14 @@ ALTER TABLE public.alerts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.fcm_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.auth_sessions ENABLE ROW LEVEL SECURITY;
 
--- Policies: district_risk
 DROP POLICY IF EXISTS "public can read district risk" ON public.district_risk;
 CREATE POLICY "public can read district risk" ON public.district_risk FOR SELECT TO anon, authenticated USING (true);
 DROP POLICY IF EXISTS "public can update district risk" ON public.district_risk;
 CREATE POLICY "public can update district risk" ON public.district_risk FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
--- Policies: historical_landslides
 DROP POLICY IF EXISTS "public can read historical landslides" ON public.historical_landslides;
 CREATE POLICY "public can read historical landslides" ON public.historical_landslides FOR SELECT TO anon, authenticated USING (true);
 
--- Policies: incidents
 DROP POLICY IF EXISTS "public can read incidents" ON public.incidents;
 CREATE POLICY "public can read incidents" ON public.incidents FOR SELECT TO anon, authenticated USING (true);
 DROP POLICY IF EXISTS "public can insert incidents" ON public.incidents;
@@ -232,7 +226,6 @@ CREATE POLICY "public can update incidents" ON public.incidents FOR UPDATE TO an
 DROP POLICY IF EXISTS "public can delete incidents" ON public.incidents;
 CREATE POLICY "public can delete incidents" ON public.incidents FOR DELETE TO anon, authenticated USING (true);
 
--- Policies: relief_requests
 DROP POLICY IF EXISTS "public can read relief_requests" ON public.relief_requests;
 CREATE POLICY "public can read relief_requests" ON public.relief_requests FOR SELECT TO anon, authenticated USING (true);
 DROP POLICY IF EXISTS "public can insert relief_requests" ON public.relief_requests;
@@ -240,7 +233,6 @@ CREATE POLICY "public can insert relief_requests" ON public.relief_requests FOR 
 DROP POLICY IF EXISTS "public can update relief_requests" ON public.relief_requests;
 CREATE POLICY "public can update relief_requests" ON public.relief_requests FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
 
--- Policies: users
 DROP POLICY IF EXISTS "public can read users" ON public.users;
 CREATE POLICY "public can read users" ON public.users FOR SELECT TO anon, authenticated USING (true);
 DROP POLICY IF EXISTS "public can insert users" ON public.users;
@@ -248,39 +240,33 @@ CREATE POLICY "public can insert users" ON public.users FOR INSERT TO anon, auth
 DROP POLICY IF EXISTS "public can update users" ON public.users;
 CREATE POLICY "public can update users" ON public.users FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
 
--- Policies: hardware_beacons
 DROP POLICY IF EXISTS "public can read hardware_beacons" ON public.hardware_beacons;
 CREATE POLICY "public can read hardware_beacons" ON public.hardware_beacons FOR SELECT TO anon, authenticated USING (true);
 DROP POLICY IF EXISTS "public can write hardware_beacons" ON public.hardware_beacons;
 CREATE POLICY "public can write hardware_beacons" ON public.hardware_beacons FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
--- Policies: beacon_sos_logs
 DROP POLICY IF EXISTS "public can read beacon_sos_logs" ON public.beacon_sos_logs;
 CREATE POLICY "public can read beacon_sos_logs" ON public.beacon_sos_logs FOR SELECT TO anon, authenticated USING (true);
 DROP POLICY IF EXISTS "public can insert beacon_sos_logs" ON public.beacon_sos_logs;
 CREATE POLICY "public can insert beacon_sos_logs" ON public.beacon_sos_logs FOR INSERT TO anon, authenticated WITH CHECK (true);
 
--- Policies: alerts
 DROP POLICY IF EXISTS "public can read alerts" ON public.alerts;
 CREATE POLICY "public can read alerts" ON public.alerts FOR SELECT TO anon, authenticated USING (true);
 DROP POLICY IF EXISTS "public can insert alerts" ON public.alerts;
 CREATE POLICY "public can insert alerts" ON public.alerts FOR INSERT TO anon, authenticated WITH CHECK (true);
 
--- Policies: fcm_tokens
 DROP POLICY IF EXISTS "public can manage fcm_tokens" ON public.fcm_tokens;
 CREATE POLICY "public can manage fcm_tokens" ON public.fcm_tokens FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
--- Policies: auth_sessions
 DROP POLICY IF EXISTS "public can manage auth_sessions" ON public.auth_sessions;
 CREATE POLICY "public can manage auth_sessions" ON public.auth_sessions FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
 
--- Policies: storage
 DROP POLICY IF EXISTS "public can upload incident photos" ON storage.objects;
 CREATE POLICY "public can upload incident photos" ON storage.objects FOR INSERT TO anon, authenticated WITH CHECK (bucket_id = 'incidents');
 DROP POLICY IF EXISTS "public can read incident photos" ON storage.objects;
 CREATE POLICY "public can read incident photos" ON storage.objects FOR SELECT TO anon, authenticated USING (bucket_id = 'incidents');
 
--- 14. Enable Supabase Realtime Broadcasting for all essential disaster response tables
+-- 14. Enable Supabase Realtime Broadcasting
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_publication_rel rel JOIN pg_class c ON c.oid = rel.prrelid JOIN pg_publication p ON p.oid = rel.prpubid WHERE p.pubname = 'supabase_realtime' AND c.relname = 'district_risk') THEN

@@ -33,6 +33,7 @@ const App = () => {
     const [route, setRoute] = useState(null);
     const [riskRefreshKey, setRiskRefreshKey] = useState(0);
     const [mapData, setMapData] = useState({ geoJsonData: null, risks: [] });
+    const [reportCoords, setReportCoords] = useState(null);
 
     const [lang, setLang] = useState(() => localStorage.getItem('ne_shield_lang') || 'en');
     const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -75,9 +76,19 @@ const App = () => {
             setTimeout(() => setSyncToast(null), 4000);
         });
 
+        // Listener for map dropped-pin reporting
+        const handleOpenReport = (e) => {
+            if (e.detail) {
+                setReportCoords(e.detail);
+                setShowIncidentForm(true);
+            }
+        };
+        window.addEventListener('ne_open_report_at', handleOpenReport);
+
         return () => {
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
+            window.removeEventListener('ne_open_report_at', handleOpenReport);
             cleanupSync();
         };
     }, []);
@@ -219,8 +230,15 @@ const App = () => {
                 <IncidentForm
                     lang={lang}
                     activeRole={activeRole}
-                    onClose={() => setShowIncidentForm(false)}
-                    onReportSubmitted={() => setRiskRefreshKey(k => k + 1)}
+                    initialCoords={reportCoords}
+                    onClose={() => {
+                        setShowIncidentForm(false);
+                        setReportCoords(null);
+                    }}
+                    onReportSubmitted={() => {
+                        setRiskRefreshKey(k => k + 1);
+                        setReportCoords(null);
+                    }}
                 />
             )}
 

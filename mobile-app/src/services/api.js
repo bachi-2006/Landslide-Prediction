@@ -500,7 +500,7 @@ export const mobileApi = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...getAuthHeader('admin')
+        ...getAuthHeader()
       },
       body: JSON.stringify(payload)
     });
@@ -513,11 +513,35 @@ export const mobileApi = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...getAuthHeader('field_officer')
+        ...getAuthHeader()
       },
       body: JSON.stringify(payload)
     });
     if (!res.ok) throw new Error('Failed to resolve incident');
+    return res.json();
+  },
+
+  async deleteIncident(incidentId) {
+    const res = await fetch(`${BASE_URL}/api/incidents/${incidentId}`, {
+      method: 'DELETE',
+      headers: {
+        ...getAuthHeader()
+      }
+    });
+    if (!res.ok) throw new Error('Failed to delete incident');
+    return res.json();
+  },
+
+  async adminCreateIncident(payload) {
+    const res = await fetch(`${BASE_URL}/api/incidents/admin/create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader()
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error('Failed to create admin incident');
     return res.json();
   },
 

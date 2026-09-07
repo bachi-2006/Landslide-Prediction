@@ -4,7 +4,7 @@ import { incidentService } from '../services/api';
 import { saveOfflineIncident } from '../services/offlineSync';
 import { getTranslation } from '../services/i18n';
 
-const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted, activeRole = 'citizen' }) => {
+const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted, activeRole = 'citizen', initialCoords = null }) => {
     const t = (key) => getTranslation(lang, key);
 
     const [formData, setFormData] = useState({
@@ -12,8 +12,8 @@ const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted, activeRole = 'c
         submitted_by: typeof window !== 'undefined' ? (localStorage.getItem('ne_citizen_name') || '') : '',
         reporter_role: activeRole || 'citizen',
         severity: 'Moderate',
-        latitude: null,
-        longitude: null,
+        latitude: initialCoords?.lat || null,
+        longitude: initialCoords?.lon || null,
     });
     const [file, setFile] = useState(null);
     const [previewUrl, setPreviewUrl] = useState(null);
@@ -22,6 +22,14 @@ const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted, activeRole = 'c
     const [successNotice, setSuccessNotice] = useState(false);
 
     React.useEffect(() => {
+        if (initialCoords?.lat && initialCoords?.lon) {
+            setFormData(prev => ({
+                ...prev,
+                latitude: initialCoords.lat,
+                longitude: initialCoords.lon
+            }));
+            return;
+        }
         if ("geolocation" in navigator) {
             navigator.geolocation.getCurrentPosition(
                 (pos) => {
@@ -41,7 +49,7 @@ const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted, activeRole = 'c
                 }
             );
         }
-    }, []);
+    }, [initialCoords]);
 
     const handleFileChange = (e) => {
         const selected = e.target.files[0];

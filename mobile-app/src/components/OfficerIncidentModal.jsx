@@ -16,7 +16,7 @@ import { mobileApi } from '../services/api';
 import { soundEngine } from '../services/soundEngine';
 
 export default function OfficerIncidentModal({ incident, userRole = 'field_officer', onClose, onUpdated }) {
-  const [officerName, setOfficerName] = useState(() => localStorage.getItem('ne_citizen_name') || 'Insp. K. Sangma');
+  const [officerName, setOfficerName] = useState(() => localStorage.getItem('ne_citizen_name') || (userRole === 'admin' ? 'SEOC Commander' : 'Insp. K. Sangma'));
   const [unitName, setUnitName] = useState('1st SDRF Rapid Response Bn');
   const [personnelCount, setPersonnelCount] = useState(4);
   const [resolutionNotes, setResolutionNotes] = useState('Cleared mudflow debris with earthmovers. Slope berms secured and traffic diverted via bypass.');
@@ -25,6 +25,25 @@ export default function OfficerIncidentModal({ incident, userRole = 'field_offic
   const [respondedCount, setRespondedCount] = useState(incident.people_responded || 1);
   const [hasResponded, setHasResponded] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
+
+  const handleDelete = async () => {
+    if (!window.confirm('Delete this incident report permanently?')) return;
+    setSubmitting(true);
+    soundEngine.playChime();
+    try {
+      await mobileApi.deleteIncident(incident.id);
+      setStatusMsg('Incident deleted from central database.');
+      setTimeout(() => {
+        if (onUpdated) onUpdated();
+        onClose();
+      }, 1000);
+    } catch (err) {
+      console.warn('Delete error:', err);
+      setStatusMsg('Delete failed: ' + (err.message || 'Error'));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleRespond = async () => {
     setSubmitting(true);
@@ -138,6 +157,26 @@ export default function OfficerIncidentModal({ incident, userRole = 'field_offic
           </button>
         </div>
 
+        {/* Role Authorization Context Banner */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          background: userRole === 'admin' ? '#fef2f2' : userRole === 'field_officer' ? '#f0fdf4' : '#f8fafc',
+          border: `1px solid ${userRole === 'admin' ? '#fecaca' : userRole === 'field_officer' ? '#bbf7d0' : '#e2e8f0'}`,
+          borderRadius: '10px',
+          padding: '8px 12px',
+          marginBottom: '14px',
+          fontSize: '11px',
+        }}>
+          <span style={{ fontWeight: 'bold', color: userRole === 'admin' ? '#991b1b' : userRole === 'field_officer' ? '#166534' : '#475569' }}>
+            {userRole === 'admin' ? '🚨 SEOC Disaster HQ Admin' : userRole === 'field_officer' ? '🛡️ Verified Field Officer' : '👤 Public Citizen Resident'}
+          </span>
+          <span style={{ fontSize: '10px', color: '#64748b' }}>
+            {userRole === 'admin' ? 'HQ Dispatch & Delete Authority' : userRole === 'field_officer' ? 'Field Triage & Resolution' : 'Read-Only Telemetry'}
+          </span>
+        </div>
+
         {/* Incident Summary Card */}
         <div style={{
           background: '#f8fafc',
@@ -222,8 +261,8 @@ export default function OfficerIncidentModal({ incident, userRole = 'field_offic
           </div>
         )}
 
-        {/* Action 1: Assign Field Officer (Admin or Officer only) */}
-        {!isResolved && (userRole === 'field_officer' || userRole === 'admin') ? (
+        {/* Action 1: Assign Field Officer (Admin ONLY) */}
+        {!isResolved && userRole === 'admin' ? (
           <form onSubmit={handleAssign} style={{
             background: 'white',
             border: '1px solid #e2e8f0',
@@ -232,7 +271,7 @@ export default function OfficerIncidentModal({ incident, userRole = 'field_offic
             marginBottom: '14px'
           }}>
             <h4 style={{ margin: '0 0 10px', fontSize: '12px', fontWeight: '800', color: '#0f172a', textTransform: 'uppercase' }}>
-              Assign Field Officer & SDRF Squad
+              Assign Field Officer & SDRF Squad (Admin Authority)
             </h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '10px' }}>
               <input 
@@ -352,6 +391,34 @@ export default function OfficerIncidentModal({ incident, userRole = 'field_offic
             </p>
           </div>
         ) : null}
+
+        {/* Action 3: Permanently Delete Incident (Admin Only) */}
+        {userRole === 'admin' && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={submitting}
+            style={{
+              width: '100%',
+              background: '#fee2e2',
+              color: '#dc2626',
+              border: '1px solid #fca5a5',
+              borderRadius: '10px',
+              padding: '11px',
+              fontSize: '12px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              marginBottom: '14px'
+            }}
+          >
+            <span>🗑️ Permanently Delete Incident (Admin)</span>
+          </button>
+        )}
+
       </section>
     </div>
   );

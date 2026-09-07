@@ -343,18 +343,143 @@ function App() {
       {/* 1. HOME / OVERVIEW TAB */}
       {activeTab === 'home' && (
         <div className="page-content">
-          <section className="greeting-row">
-            <div>
-              <p className="muted">Sunday, 7 September 2026</p>
-              <h2>Stay ahead of the slope.</h2>
+          {/* Role-Aware Command & Safety Landing Header */}
+          <section style={{
+            background: userRole === 'admin' 
+              ? 'linear-gradient(135deg, #1e1b4b 0%, #311042 100%)' 
+              : userRole === 'field_officer'
+              ? 'linear-gradient(135deg, #0c4a6e 0%, #075985 100%)'
+              : 'linear-gradient(135deg, #064e3b 0%, #065f46 100%)',
+            borderRadius: '20px',
+            padding: '16px 18px',
+            marginBottom: '16px',
+            color: 'white',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+            border: '1px solid rgba(255,255,255,0.15)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ 
+                  background: 'rgba(255,255,255,0.2)', 
+                  padding: '4px 8px', 
+                  borderRadius: '8px', 
+                  fontSize: '11px', 
+                  fontWeight: 'bold', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '4px' 
+                }}>
+                  {userRole === 'admin' ? '🚨 SEOC COMMAND' : userRole === 'field_officer' ? '🛡️ SDRF FIELD PATROL' : '🏔️ NE-SHIELD CITIZEN'}
+                </span>
+                <span style={{ fontSize: '10px', opacity: 0.8 }}>Sunday, 7 September 2026</span>
+              </div>
+              <button 
+                className="location-chip" 
+                onClick={handleAcquireLocationChip}
+                style={{ 
+                  border: 'none', 
+                  cursor: 'pointer', 
+                  background: 'rgba(255,255,255,0.18)', 
+                  color: 'white', 
+                  fontSize: '11px', 
+                  padding: '4px 8px', 
+                  borderRadius: '8px' 
+                }}
+              >
+                <LocateFixed size={13} /> {userLocationName}
+              </button>
             </div>
-            <button 
-              className="location-chip" 
-              onClick={handleAcquireLocationChip}
-              style={{ border: 'none', cursor: 'pointer' }}
-            >
-              <LocateFixed size={15} /> {userLocationName}
-            </button>
+
+            <h2 style={{ fontSize: '18px', fontWeight: '800', margin: '0 0 4px', letterSpacing: '-0.01em' }}>
+              {userRole === 'admin' 
+                ? 'Regional Disaster Operations Command'
+                : userRole === 'field_officer'
+                ? `Welcome, ${localStorage.getItem('ne_citizen_name') || 'Field Officer'}`
+                : 'Stay ahead of the slope.'}
+            </h2>
+            <p style={{ margin: '0 0 14px', fontSize: '12px', opacity: 0.85, lineHeight: 1.4 }}>
+              {userRole === 'admin'
+                ? 'Full dispatch, unit assignment, and multi-channel siren broadcast authority active.'
+                : userRole === 'field_officer'
+                ? 'Rapid response unit logged into state emergency telemetry. Inspect & triage active hazards.'
+                : 'Real-time XGBoost landslide early warning & AI terrain risk monitoring across NER.'}
+            </p>
+
+            {/* Quick KPI Strip */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr 1fr',
+              gap: '8px',
+              background: 'rgba(0,0,0,0.22)',
+              borderRadius: '12px',
+              padding: '10px 12px',
+              border: '1px solid rgba(255,255,255,0.1)'
+            }}>
+              {userRole === 'admin' ? (
+                <>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '16px', fontWeight: '900', color: '#fca5a5' }}>
+                      {rawIncidents.filter(i => i.status !== 'resolved' && i.status !== 'closed').length}
+                    </div>
+                    <small style={{ fontSize: '10px', opacity: 0.8 }}>Open Hazards</small>
+                  </div>
+                  <div style={{ textAlign: 'center', borderLeft: '1px solid rgba(255,255,255,0.15)', borderRight: '1px solid rgba(255,255,255,0.15)' }}>
+                    <div style={{ fontSize: '16px', fontWeight: '900', color: '#fef08a' }}>
+                      {rawIncidents.filter(i => !i.assigned_officer && i.status !== 'resolved').length}
+                    </div>
+                    <small style={{ fontSize: '10px', opacity: 0.8 }}>Unassigned</small>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '16px', fontWeight: '900', color: '#fed7aa' }}>
+                      {districts.filter(d => d.risk === 'Critical').length}
+                    </div>
+                    <small style={{ fontSize: '10px', opacity: 0.8 }}>Critical Sectors</small>
+                  </div>
+                </>
+              ) : userRole === 'field_officer' ? (
+                <>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '16px', fontWeight: '900', color: '#93c5fd' }}>
+                      {rawIncidents.filter(i => i.assigned_officer && i.assigned_officer.toLowerCase().includes((localStorage.getItem('ne_citizen_name') || '').toLowerCase()) && i.status !== 'resolved').length}
+                    </div>
+                    <small style={{ fontSize: '10px', opacity: 0.8 }}>My Assigned</small>
+                  </div>
+                  <div style={{ textAlign: 'center', borderLeft: '1px solid rgba(255,255,255,0.15)', borderRight: '1px solid rgba(255,255,255,0.15)' }}>
+                    <div style={{ fontSize: '16px', fontWeight: '900', color: '#86efac' }}>
+                      {rawIncidents.filter(i => i.status === 'resolved').length}
+                    </div>
+                    <small style={{ fontSize: '10px', opacity: 0.8 }}>Cleared / Safe</small>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '16px', fontWeight: '900', color: '#fed7aa' }}>
+                      {rawIncidents.length}
+                    </div>
+                    <small style={{ fontSize: '10px', opacity: 0.8 }}>Regional Reports</small>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '16px', fontWeight: '900', color: '#86efac' }}>
+                      {selectedDistrict?.score || 64}%
+                    </div>
+                    <small style={{ fontSize: '10px', opacity: 0.8 }}>Regional Risk</small>
+                  </div>
+                  <div style={{ textAlign: 'center', borderLeft: '1px solid rgba(255,255,255,0.15)', borderRight: '1px solid rgba(255,255,255,0.15)' }}>
+                    <div style={{ fontSize: '16px', fontWeight: '900', color: '#fef08a' }}>
+                      {rawIncidents.filter(i => i.status !== 'resolved').length}
+                    </div>
+                    <small style={{ fontSize: '10px', opacity: 0.8 }}>Active Alerts</small>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '16px', fontWeight: '900', color: '#93c5fd' }}>
+                      3 Hubs
+                    </div>
+                    <small style={{ fontSize: '10px', opacity: 0.8 }}>Shelters Open</small>
+                  </div>
+                </>
+              )}
+            </div>
           </section>
 
           {/* Live Regional Threat Hero Card */}
@@ -897,6 +1022,18 @@ function AlertsView({
   onSelectIncident, 
   onRespondIncident 
 }) {
+  const currentOfficerName = typeof window !== 'undefined' ? localStorage.getItem('ne_citizen_name') || '' : '';
+  const [assignedOnly, setAssignedOnly] = useState(userRole === 'field_officer');
+
+  // Filter alerts if assignedOnly is active for field officers
+  const displayedAlerts = alerts.filter(alert => {
+    if (userRole === 'field_officer' && assignedOnly && currentOfficerName) {
+      const matched = rawIncidents.find(i => i.id === alert.id);
+      return matched?.assigned_officer && matched.assigned_officer.toLowerCase().includes(currentOfficerName.toLowerCase());
+    }
+    return true;
+  });
+
   return (
     <div className="page-content">
       <section className="page-heading">
@@ -913,6 +1050,56 @@ function AlertsView({
           <Volume2 size={19} />
         </button>
       </section>
+
+      {/* Role Permission Guidance Banner */}
+      <div style={{
+        background: userRole === 'admin' ? '#fef2f2' : userRole === 'field_officer' ? '#f0fdf4' : '#f8fafc',
+        border: `1px solid ${userRole === 'admin' ? '#fecaca' : userRole === 'field_officer' ? '#bbf7d0' : '#cbd5e1'}`,
+        borderRadius: '14px',
+        padding: '10px 14px',
+        marginBottom: '16px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '8px'
+      }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 'bold', color: userRole === 'admin' ? '#991b1b' : userRole === 'field_officer' ? '#166534' : '#334155' }}>
+              {userRole === 'admin' ? '🚨 SEOC Incident Dispatch' : userRole === 'field_officer' ? '🛡️ SDRF Field Triage Queue' : '👥 Public Safety Feed'}
+            </span>
+            <span style={{ fontSize: '9px', background: userRole === 'admin' ? '#dc2626' : userRole === 'field_officer' ? '#16a34a' : '#64748b', color: 'white', padding: '1px 6px', borderRadius: '4px', fontWeight: 'bold', textTransform: 'uppercase' }}>
+              {userRole}
+            </span>
+          </div>
+          <small style={{ fontSize: '10px', color: '#64748b', display: 'block', marginTop: '2px' }}>
+            {userRole === 'admin'
+              ? 'Tap any incident to assign field squads or permanently delete.'
+              : userRole === 'field_officer'
+              ? 'Tap assigned incidents to submit field triage and mark cleared.'
+              : 'Tap to view details, report status, and see emergency coordinates.'}
+          </small>
+        </div>
+        {userRole === 'field_officer' && (
+          <button
+            type="button"
+            onClick={() => setAssignedOnly(!assignedOnly)}
+            style={{
+              background: assignedOnly ? '#16a34a' : 'white',
+              color: assignedOnly ? 'white' : '#166534',
+              border: '1px solid #16a34a',
+              borderRadius: '8px',
+              padding: '6px 10px',
+              fontSize: '10px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {assignedOnly ? '✓ Assigned' : 'Show All'}
+          </button>
+        )}
+      </div>
 
       {/* Siren Alarm Controller */}
       <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '16px', padding: '16px', marginBottom: '18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
@@ -991,87 +1178,100 @@ function AlertsView({
 
       {/* Live Alerts Stream */}
       <h4 style={{ margin: '0 0 10px', fontSize: '11px', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-        Live Community Hazard Stream ({alerts.length})
+        Live Community Hazard Stream ({displayedAlerts.length})
       </h4>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {alerts.map((alert) => {
-          const matchedInc = rawIncidents.find(i => i.id === alert.id) || {
-            id: alert.id || 'inc-01',
-            title: alert.title,
-            description: alert.text,
-            status: 'open',
-            latitude: alert.latitude || 25.5788,
-            longitude: alert.longitude || 91.8933,
-            people_responded: 1,
-          };
-          return (
-            <article 
-              className="alert-row" 
-              key={alert.id || alert.title}
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}
-            >
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-                <span className={`alert-icon ${alert.color}`}>
-                  {alert.color === 'red' ? <Siren size={17} /> : <FileWarning size={17} />}
-                </span>
-                <div style={{ flex: 1 }}>
-                  <div className="alert-meta"><span>{alert.type}</span><time>{alert.time}</time></div>
-                  <strong>{alert.title}</strong>
-                  <p>{alert.text}</p>
+      {displayedAlerts.length === 0 ? (
+        <div style={{ background: 'white', border: '1px dashed #cbd5e1', borderRadius: '12px', padding: '24px', textAlign: 'center', color: '#64748b', fontSize: '12px' }}>
+          {userRole === 'field_officer' && assignedOnly
+            ? 'No active incidents currently assigned to your callsign. Toggle "Show All" to inspect regional reports.'
+            : 'No active incident reports in this sector.'}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {displayedAlerts.map((alert) => {
+            const matchedInc = rawIncidents.find(i => i.id === alert.id) || {
+              id: alert.id || 'inc-01',
+              title: alert.title,
+              description: alert.text,
+              status: 'open',
+              latitude: alert.latitude || 25.5788,
+              longitude: alert.longitude || 91.8933,
+              people_responded: 1,
+            };
+            return (
+              <article 
+                className="alert-row" 
+                key={alert.id || alert.title}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                  <span className={`alert-icon ${alert.color}`}>
+                    {alert.color === 'red' ? <Siren size={17} /> : <FileWarning size={17} />}
+                  </span>
+                  <div style={{ flex: 1 }}>
+                    <div className="alert-meta"><span>{alert.type}</span><time>{alert.time}</time></div>
+                    <strong>{alert.title}</strong>
+                    <p>{alert.text}</p>
+                    {matchedInc.assigned_officer && (
+                      <span style={{ fontSize: '10px', color: '#0369a1', fontWeight: '600', display: 'block', marginTop: '2px' }}>
+                        👮 Assigned: {matchedInc.assigned_officer}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
 
-              {/* Action and Responder bar */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid #f1f5f9', paddingTop: '8px', marginTop: '6px' }}>
-                <span style={{ fontSize: '10px', color: '#0284c7', fontWeight: 'bold' }}>
-                  👥 {matchedInc.people_responded || 0} Responded
-                </span>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (onRespondIncident) onRespondIncident(matchedInc);
-                    }}
-                    style={{
-                      background: '#0284c7',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '6px',
-                      padding: '5px 8px',
-                      fontSize: '10px',
-                      fontWeight: 'bold',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    👥 Respond
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (onSelectIncident) onSelectIncident(matchedInc);
-                    }}
-                    style={{
-                      background: '#0f5c5d',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '6px',
-                      padding: '5px 8px',
-                      fontSize: '10px',
-                      fontWeight: 'bold',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {userRole === 'field_officer' || userRole === 'admin' ? '🛡️ Triage / Resolve' : 'Details'}
-                  </button>
+                {/* Action and Responder bar */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid #f1f5f9', paddingTop: '8px', marginTop: '6px' }}>
+                  <span style={{ fontSize: '10px', color: '#0284c7', fontWeight: 'bold' }}>
+                    👥 {matchedInc.people_responded || 0} Responded
+                  </span>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onRespondIncident) onRespondIncident(matchedInc);
+                      }}
+                      style={{
+                        background: '#0284c7',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '5px 8px',
+                        fontSize: '10px',
+                        fontWeight: 'bold',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      👥 Respond
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onSelectIncident) onSelectIncident(matchedInc);
+                      }}
+                      style={{
+                        background: userRole === 'admin' ? '#991b1b' : userRole === 'field_officer' ? '#0f5c5d' : '#475569',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '5px 8px',
+                        fontSize: '10px',
+                        fontWeight: 'bold',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {userRole === 'admin' ? '🚨 Triage / Assign / Delete' : userRole === 'field_officer' ? '🛡️ Triage / Resolve' : 'ℹ️ Details'}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </article>
-          );
-        })}
-      </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
