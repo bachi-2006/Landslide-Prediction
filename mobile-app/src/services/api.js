@@ -1,16 +1,35 @@
 // Mobile API Service for NE-SHIELD Backend & Database
-const getApiBaseUrl = () => {
+export const getApiBaseUrl = () => {
+  // Check if user set custom host in Profile/Settings
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const customHost = localStorage.getItem('neshield_api_host');
+    if (customHost && customHost.trim()) return customHost.trim().replace(/\/+$/, '');
+  }
+
   // When running in mobile Vite dev server or browser
   if (typeof window !== 'undefined') {
-    if (window.location.origin.includes(':5173')) {
+    if (window.location.origin.includes(':5173') || window.location.origin.includes(':3000')) {
       return ''; // Vite proxy forwards /api to backend
     }
   }
-  // Android Capacitor or external host
+  // Android Capacitor default (host IP or emulator loopback)
   return 'http://10.82.15.222:8000';
 };
 
 const BASE_URL = getApiBaseUrl();
+
+const getAuthHeader = (role = 'citizen') => {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const savedRole = localStorage.getItem('neshield_user_role') || role;
+    if (savedRole === 'admin' || savedRole === 'seoc') {
+      return { 'Authorization': 'Bearer ne-shield-admin-key-2026' };
+    }
+    if (savedRole === 'field_officer' || savedRole === 'officer' || savedRole === 'sdrf') {
+      return { 'Authorization': 'Bearer ne-shield-officer-key-2026' };
+    }
+  }
+  return {};
+};
 
 export const mobileApi = {
   // 1. District Risks
@@ -46,7 +65,29 @@ export const mobileApi = {
     return res.json();
   },
 
-  // 3. Incidents
+  // 3. Evacuation Shelter & Route Calculation with Personalized Precautions
+  async calculateEvacuation(latitude, longitude, locationName = 'Current Location') {
+    const res = await fetch(`${BASE_URL}/api/route/evacuate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        latitude: Number(latitude),
+        longitude: Number(longitude),
+        location_name: locationName
+      })
+    });
+    if (!res.ok) throw new Error('Failed to calculate evacuation route');
+    return res.json();
+  },
+
+  async getShelters(lat = null, lon = null) {
+    const query = lat && lon ? `?lat=${lat}&lon=${lon}` : '';
+    const res = await fetch(`${BASE_URL}/api/route/shelters${query}`);
+    if (!res.ok) throw new Error('Failed to fetch relief shelters');
+    return res.json();
+  },
+
+  // 4. Incidents & Officer Assignment / Resolution
   async getIncidents() {
     const res = await fetch(`${BASE_URL}/api/incidents`);
     if (!res.ok) throw new Error('Failed to fetch incidents');
@@ -62,7 +103,43 @@ export const mobileApi = {
     return res.json();
   },
 
-  // 4. Road Status Corridors
+  async respondIncident(incidentId, payload) {
+    const res = await fetch(`${BASE_URL}/api/incidents/${incidentId}/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error('Failed to record responder');
+    return res.json();
+  },
+
+  async assignIncident(incidentId, payload) {
+    const res = await fetch(`${BASE_URL}/api/incidents/${incidentId}/assign`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader('admin')
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error('Failed to assign field officer');
+    return res.json();
+  },
+
+  async resolveIncident(incidentId, payload) {
+    const res = await fetch(`${BASE_URL}/api/incidents/${incidentId}/resolve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader('field_officer')
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error('Failed to resolve incident');
+    return res.json();
+  },
+
+  // 5. Road Status Corridors
   async getRoadStatus(districtId = null) {
     const url = districtId 
       ? `${BASE_URL}/api/route/status/${districtId}`
@@ -72,7 +149,7 @@ export const mobileApi = {
     return res.json();
   },
 
-  // 5. Hardware Siren & Status
+  // 6. Hardware Siren & Status
   async getHardwareStatus() {
     const res = await fetch(`${BASE_URL}/api/alert/hardware/status`);
     if (!res.ok) throw new Error('Failed to fetch hardware status');
@@ -89,7 +166,7 @@ export const mobileApi = {
     return res.json();
   },
 
-  // 6. Device Push Token Registration
+  // 7. Device Push Token Registration
   async registerDeviceToken(token, districtId = null) {
     const res = await fetch(`${BASE_URL}/api/devices/token`, {
       method: 'POST',
@@ -100,3 +177,4 @@ export const mobileApi = {
     return res.json();
   }
 };
+

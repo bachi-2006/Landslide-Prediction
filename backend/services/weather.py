@@ -83,3 +83,53 @@ async def fetch_weather(lat: float, lon: float) -> Optional[WeatherData]:
 
     logger.error(f"Max retries reached for weather fetch at {lat}, {lon}")
     return None
+
+
+async def fetch_weather_forecast(lat: float, lon: float) -> list[dict]:
+    """
+    Fetches +24h, +48h, +72h predicted cumulative rainfall & soil moisture
+    from Open-Meteo 4-day forecast.
+    """
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "hourly": "rain,soil_moisture_0_to_1cm",
+        "forecast_days": 4,
+        "timezone": "Asia/Kolkata"
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            hourly = data.get("hourly", {})
+            rain = hourly.get("rain", [])
+            soil = hourly.get("soil_moisture_0_to_1cm", [])
+            times = hourly.get("time", [])
+
+            if not rain or not times:
+                return []
+
+            now_str = datetime.now(IST).strftime("%Y-%m-%dT%H:00")
+            matching_indices = [i for i, t in enumerate(times) if t <= now_str]
+            cur_idx = matching_indices[-1] if matching_indices else 0
+
+            results = []
+            for offset in [24, 48, 72]:
+                target_idx = min(cur_idx + offset, len(rain) - 1)
+                start_24h = max(0, target_idx - 23)
+                rain_24h = float(sum(rain[start_24h:target_idx + 1]))
+                soil_m = float(soil[target_idx]) if target_idx < len(soil) else 0.4
+                results.append({
+                    "rain_24h": round(rain_24h, 1),
+                    "soil_moisture": round(soil_m, 3)
+                })
+
+            return results
+    except Exception as e:
+        logger.warning(f"Failed to fetch forecast telemetry for {lat}, {lon}: {e}")
+        return []
+

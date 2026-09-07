@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import axios from 'axios';
 import { riskService, alertService } from '../services/api';
+import { soundEngine } from '../services/soundEngine';
 
 const DisasterSimulator = ({ geoJsonData, onSimulationComplete, onClose, lang = 'en' }) => {
     const districts = (geoJsonData?.features || []).map(f => ({
@@ -157,7 +158,10 @@ const DisasterSimulator = ({ geoJsonData, onSimulationComplete, onClose, lang = 
             // Broadcast alert if High or Critical
             let alertDispatched = false;
             let hardwareTriggered = false;
-            if (simulatedPayload.risk_score >= 0.6) {
+            if (simulatedPayload.risk_score >= 0.55) {
+                // Trigger Web Audio emergency siren
+                soundEngine.playSiren(5);
+
                 try {
                     await alertService.broadcastAlert({
                         district_id: districtObj.id,

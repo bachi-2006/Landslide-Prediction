@@ -192,6 +192,36 @@ const DistrictPanel = ({ district, onClose, onRouteGenerated, onRiskUpdated, lan
                 </div>
             )}
 
+            {/* AI Predictive Risk Forecast (Next 72 Hours) */}
+            {data.forecast_timeline && (
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                            <TrendingUp size={14} className="text-indigo-600" />
+                            AI Forecast Trajectory (72h)
+                        </h3>
+                        <span className="text-[10px] font-mono text-indigo-600 font-bold">XGBoost Trend</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                        {data.forecast_timeline.map((step, i) => (
+                            <div key={i} className="bg-white p-2.5 rounded-lg border border-slate-200 flex flex-col justify-between">
+                                <span className="text-[10px] text-slate-500 font-medium">{step.timeframe}</span>
+                                <div className="flex items-baseline justify-between mt-1">
+                                    <span className="text-base font-black text-slate-900">{step.risk_pct}%</span>
+                                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded uppercase ${
+                                        step.level === 'Critical' ? 'bg-red-100 text-red-700' :
+                                        step.level === 'High' ? 'bg-orange-100 text-orange-700' :
+                                        'bg-emerald-100 text-emerald-700'
+                                    }`}>
+                                        {step.level}
+                                    </span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {/* Disaster Precautions & Safety Advisory (NDMA Standard) */}
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
                 <div className="flex items-center justify-between">

@@ -10,6 +10,8 @@ const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted }) => {
     const [formData, setFormData] = useState({
         description: '',
         submitted_by: '',
+        reporter_role: 'citizen',
+        severity: 'Moderate',
         latitude: null,
         longitude: null,
     });
@@ -70,6 +72,8 @@ const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted }) => {
             saveOfflineIncident({
                 description: formData.description,
                 submitted_by: formData.submitted_by,
+                reporter_role: formData.reporter_role,
+                severity: formData.severity,
                 latitude: lat,
                 longitude: lon,
                 photo_base64: photoBase64,
@@ -87,6 +91,8 @@ const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted }) => {
         const data = new FormData();
         data.append('description', formData.description);
         data.append('submitted_by', formData.submitted_by);
+        data.append('reporter_role', formData.reporter_role);
+        data.append('severity', formData.severity);
         data.append('latitude', lat);
         data.append('longitude', lon);
         if (file) data.append('photo', file);
@@ -151,12 +157,61 @@ const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted }) => {
                     </div>
                 ) : (
                     <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-4">
+                        {/* Reporter Role Selector */}
                         <div className="flex flex-col gap-1">
-                            <label className="text-xs font-semibold text-slate-700">{t('your_name')}</label>
+                            <label className="text-xs font-semibold text-slate-700">Reporting Category</label>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setFormData({ ...formData, reporter_role: 'citizen' })}
+                                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                                        formData.reporter_role === 'citizen'
+                                            ? 'bg-red-50 border-red-500 text-red-700 shadow-sm'
+                                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                                    }`}
+                                >
+                                    <span>👤 Citizen Hazard</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setFormData({ ...formData, reporter_role: 'field_officer' })}
+                                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                                        formData.reporter_role === 'field_officer'
+                                            ? 'bg-blue-50 border-blue-600 text-blue-700 shadow-sm ring-1 ring-blue-500'
+                                            : 'bg-slate-50 border-slate-200 text-slate-600'
+                                    }`}
+                                >
+                                    <span>🛡️ Field Officer Verified</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        {formData.reporter_role === 'field_officer' && (
+                            <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-2.5 flex items-center justify-between text-xs text-blue-900">
+                                <div>
+                                    <span className="font-bold block text-[11px]">SDRF Ground Protocol</span>
+                                    <span className="text-[10px] text-blue-700">Official verification badge will be permanently marked on GIS Map</span>
+                                </div>
+                                <select
+                                    value={formData.severity || 'High'}
+                                    onChange={e => setFormData({ ...formData, severity: e.target.value })}
+                                    className="bg-white border border-blue-300 text-xs font-bold rounded-lg px-2 py-1 outline-none text-blue-900"
+                                >
+                                    <option value="Moderate">Moderate Hazard</option>
+                                    <option value="High">High Threat</option>
+                                    <option value="Critical">Critical Failure</option>
+                                </select>
+                            </div>
+                        )}
+
+                        <div className="flex flex-col gap-1">
+                            <label className="text-xs font-semibold text-slate-700">
+                                {formData.reporter_role === 'field_officer' ? 'Field Officer ID & Designation' : t('your_name')}
+                            </label>
                             <input
                                 required
                                 className="p-2.5 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-                                placeholder="e.g. Field Officer / Local Resident"
+                                placeholder={formData.reporter_role === 'field_officer' ? 'e.g. Inspector H. Lyngdoh (SDRF Patrol Alpha)' : 'e.g. Local Resident / Commuter'}
                                 value={formData.submitted_by}
                                 onChange={e => setFormData({...formData, submitted_by: e.target.value})}
                             />

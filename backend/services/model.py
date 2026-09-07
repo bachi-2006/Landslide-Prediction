@@ -18,23 +18,27 @@ class PredictionResult(TypedDict):
     risk_level: str
     shap_factors: Dict[str, float]
 
+from pathlib import Path
+
 # Path to the trained model
-MODEL_PATH = "backend/ml/model.joblib"
+ROOT_DIR = Path(__file__).resolve().parent.parent
+MODEL_PATH = ROOT_DIR / "ml" / "model.joblib"
 model = None
 explainer = None
 
 def load_model():
     """Loads the XGBoost model and initializes SHAP TreeExplainer."""
     global model, explainer
-    if os.path.exists(MODEL_PATH):
+    model_str_path = str(MODEL_PATH)
+    if os.path.exists(model_str_path):
         try:
-            model = joblib.load(MODEL_PATH)
+            model = joblib.load(model_str_path)
             explainer = shap.TreeExplainer(model)
-            logger.info("ML model and SHAP TreeExplainer loaded successfully.")
+            logger.info(f"ML model and SHAP TreeExplainer loaded successfully from {model_str_path}.")
         except Exception as e:
             logger.error(f"Error loading model or SHAP explainer: {e}. Falling back to mock model.")
     else:
-        logger.warning("model.joblib not found. Using heuristic prediction logic.")
+        logger.warning(f"model.joblib not found at {model_str_path}. Using heuristic prediction logic.")
 
 def get_risk_level(score: float) -> str:
     """Buckets risk score into levels."""

@@ -181,19 +181,103 @@ const PointAnalyticsModal = ({ pointData, onClose, onNavigateRoute }) => {
                                 </div>
                             </div>
 
+                            {/* Regional Spatial Context & Surrounding Data Card */}
+                            <div className="bg-slate-800/40 border border-slate-700/80 rounded-2xl p-4 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="text-xs font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                                        <Compass size={14} /> Regional Spatial Neighborhood Context (25km Radius)
+                                    </h3>
+                                    <span className="text-[10px] font-mono text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full">
+                                        {analytics?.regional_context?.historical_density_zone || 'Regional Terrain Core'}
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+                                    <div className="bg-slate-900/70 p-2.5 rounded-xl border border-slate-800">
+                                        <span className="text-slate-400 text-[10px] block">Regional Landslides</span>
+                                        <span className="font-bold text-white text-xs">
+                                            {analytics?.regional_context?.nearby_historical_count ?? 4} in 25km radius
+                                        </span>
+                                    </div>
+                                    <div className="bg-slate-900/70 p-2.5 rounded-xl border border-slate-800">
+                                        <span className="text-slate-400 text-[10px] block">Surrounding Incidents</span>
+                                        <span className={`font-bold text-xs ${analytics?.regional_context?.nearby_active_incidents_count > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                                            {analytics?.regional_context?.nearby_active_incidents_count ?? 0} Active Nearby
+                                        </span>
+                                    </div>
+                                    <div className="bg-slate-900/70 p-2.5 rounded-xl border border-slate-800 col-span-2 sm:col-span-1">
+                                        <span className="text-slate-400 text-[10px] block">Regional Uplift</span>
+                                        <span className="font-bold text-xs text-blue-400">
+                                            {analytics?.regional_context?.regional_multiplier_applied ? '+15% Terrain Corroborated' : 'Nominal Regional Gradient'}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {analytics?.regional_context?.nearby_incidents?.length > 0 && (
+                                    <div className="pt-2 border-t border-slate-800 space-y-1.5">
+                                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Nearby Ground Observations:</span>
+                                        {analytics.regional_context.nearby_incidents.map((inc, i) => (
+                                            <div key={i} className="bg-slate-950/60 p-2 rounded-lg text-[11px] flex items-center justify-between border border-slate-800">
+                                                <span className="text-slate-300 truncate max-w-[280px]">⚠️ {inc.description}</span>
+                                                <span className="text-amber-400 font-mono text-[10px] shrink-0 font-bold">{inc.distance_km} km away</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* 3-Day Predictive Forecast Trajectory (Now, +24h, +48h, +72h) */}
+                            {analytics?.predictions_timeline && (
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                            <TrendingUp size={14} className="text-emerald-400" />
+                                            AI Predictive Landslide Forecast (72 Hours)
+                                        </h3>
+                                        <span className="text-[10px] font-mono text-emerald-400">
+                                            Met-Office Multi-Day Gradient
+                                        </span>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                                        {analytics.predictions_timeline.map((pred, i) => {
+                                            const pLevel = pred.predicted_level;
+                                            const pColor = pLevel === 'Critical' ? 'border-red-500/40 bg-red-500/10 text-red-400'
+                                                : pLevel === 'High' ? 'border-orange-500/40 bg-orange-500/10 text-orange-400'
+                                                : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400';
+                                            return (
+                                                <div key={i} className={`p-2.5 rounded-xl border flex flex-col justify-between ${pColor}`}>
+                                                    <span className="font-semibold text-[11px] text-slate-300">{pred.timeframe}</span>
+                                                    <div className="my-1.5">
+                                                        <span className="text-xl font-black">{pred.predicted_risk_pct}%</span>
+                                                        <span className="block text-[10px] opacity-80 uppercase font-bold">{pred.predicted_level}</span>
+                                                    </div>
+                                                    <span className="text-[10px] text-slate-400 font-mono">
+                                                        🌧️ {pred.rain_accum_mm}mm
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Field Incident Metadata (if triggered from an incident pin) */}
                             {incidentInfo && (
                                 <div className="bg-slate-800/40 p-4 rounded-xl border border-slate-800 text-xs space-y-2">
                                     <div className="flex items-center justify-between text-slate-400">
-                                        <span className="font-bold text-slate-200">Reported Field Hazard:</span>
+                                        <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                                            {incidentInfo.reporter_role === 'field_officer' ? '🛡️ Official Field Inspection:' : 'Citizen Hazard Report:'}
+                                        </span>
                                         <span className="font-mono">{incidentInfo.created_at ? new Date(incidentInfo.created_at).toLocaleTimeString() : 'Live'}</span>
                                     </div>
                                     <p className="text-slate-300 bg-slate-950/60 p-3 rounded-lg border border-slate-800/80 leading-relaxed">
                                         "{incidentInfo.description}"
                                     </p>
                                     <div className="flex items-center justify-between pt-1 text-[11px] text-slate-400">
-                                        <span>Reporter: {incidentInfo.submitted_by || 'Field Unit'}</span>
-                                        <span className="text-emerald-400 font-semibold">✓ Verified GPS Signature</span>
+                                        <span>Reporter: <strong className="text-slate-200">{incidentInfo.submitted_by || 'Ground Unit'}</strong></span>
+                                        <span className={`font-semibold ${incidentInfo.reporter_role === 'field_officer' ? 'text-blue-400' : 'text-emerald-400'}`}>
+                                            {incidentInfo.reporter_role === 'field_officer' ? '✓ Verified Field Inspection' : '✓ Community Logged'}
+                                        </span>
                                     </div>
                                 </div>
                             )}

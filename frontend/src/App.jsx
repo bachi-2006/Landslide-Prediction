@@ -6,10 +6,14 @@ import EmergencyDashboard from './components/EmergencyDashboard';
 import LandingPage from './components/LandingPage';
 import DisasterSimulator from './components/DisasterSimulator';
 import AlertsEngine from './components/AlertsEngine';
-import { AlertTriangle, PlusCircle, ShieldAlert, Globe, WifiOff, CheckCircle2, Home, CloudLightning, Radio } from 'lucide-react';
+import LocationEvacuationModal from './components/LocationEvacuationModal';
+import Sidebar from './components/Sidebar';
+import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { requestNotificationPermission, onNotificationReceived } from './services/firebase';
 import { languages, getTranslation } from './services/i18n';
 import { initOfflineSync } from './services/offlineSync';
+import { rbac, ROLES, ROLE_CONFIG } from './services/rbac';
+
 
 const App = () => {
     const [currentView, setCurrentView] = useState('landing'); // 'landing' | 'command_center'
@@ -18,6 +22,9 @@ const App = () => {
     const [showEmergencyDashboard, setShowEmergencyDashboard] = useState(false);
     const [showSimulator, setShowSimulator] = useState(false);
     const [showAlertsEngine, setShowAlertsEngine] = useState(false);
+    const [showEvacuationModal, setShowEvacuationModal] = useState(false);
+    const [activeRole, setActiveRole] = useState(() => rbac.getCurrentRole());
+    const [emergencyBanner, setEmergencyBanner] = useState(null);
 
     const [route, setRoute] = useState(null);
     const [riskRefreshKey, setRiskRefreshKey] = useState(0);
@@ -28,6 +35,13 @@ const App = () => {
     const [syncToast, setSyncToast] = useState(null);
 
     const t = (key) => getTranslation(lang, key);
+
+    const handleRoleChange = (newRole) => {
+        rbac.setRole(newRole);
+        setActiveRole(newRole);
+        setSyncToast(`Role switched to: ${ROLE_CONFIG[newRole].label}`);
+        setTimeout(() => setSyncToast(null), 3000);
+    };
 
     useEffect(() => {
         // Initialize Firebase notifications on load
@@ -85,6 +99,17 @@ const App = () => {
             setSelectedDistrict(feat);
         }
 
+        // Trigger Live High-Priority Disaster Emergency Banner
+        const pRisk = Math.round(simulatedDistrict.risk_score * 100);
+        if (pRisk >= 55) {
+            setEmergencyBanner({
+                title: `DISASTER SIMULATION WARNING: ${simulatedDistrict.district_name}`,
+                probability: pRisk,
+                level: simulatedDistrict.risk_level,
+                message: `HIGH PROBABILITY OF LANDSLIDE DISASTER DETECTED (${pRisk}%). BE READY: Activate local shelters, clear NH bottlenecks, and prepare evacuation corridors immediately.`
+            });
+        }
+
         setSyncToast(`Simulation applied to ${simulatedDistrict.district_name}: Risk ${simulatedDistrict.risk_level}`);
         setRiskRefreshKey(k => k + 1);
         setTimeout(() => setSyncToast(null), 4000);
@@ -99,106 +124,72 @@ const App = () => {
         );
     }
 
+    const currentRoleCfg = ROLE_CONFIG[activeRole] || ROLE_CONFIG[ROLES.CITIZEN];
+
     return (
         <div className="flex h-screen w-full overflow-hidden bg-slate-100 relative">
-            {/* Top Navigation Bar */}
-            <div className="fixed top-4 left-4 z-[1000] flex flex-wrap gap-2 items-center">
-                {/* Switch to Landing Page Button */}
-                <button
-                    onClick={() => setCurrentView('landing')}
-                    className="bg-white/95 backdrop-blur shadow-lg rounded-full px-3.5 py-2 flex items-center gap-1.5 border border-slate-200 text-slate-700 hover:text-blue-600 font-semibold text-xs transition-all"
-                >
-                    <Home size={15} className="text-blue-600" />
-                    <span>Overview</span>
-                </button>
-
-                {/* Brand Logo */}
-                <div className="bg-white/95 backdrop-blur shadow-lg rounded-full px-4 py-2 flex items-center gap-2 border border-slate-200">
-                    <div className="p-1 bg-blue-50 text-blue-600 rounded-full">
-                        <AlertTriangle size={16} />
+            {/* Live Disaster Simulation / Crisis Warning Banner */}
+            {emergencyBanner && (
+                <div className="fixed top-0 left-0 right-0 z-[1500] bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 text-white px-4 py-2.5 shadow-2xl flex items-center justify-between animate-in slide-in-from-top duration-300">
+                    <div className="flex items-center gap-2.5 max-w-4xl">
+                        <div className="p-1.5 bg-white text-red-600 rounded-full animate-ping shrink-0">
+                            <AlertTriangle size={14} />
+                        </div>
+                        <div className="text-xs">
+                            <strong className="font-black uppercase tracking-wider mr-2 bg-black/20 px-2 py-0.5 rounded">
+                                🚨 {emergencyBanner.title} (Probability: {emergencyBanner.probability}%)
+                            </strong>
+                            <span className="font-medium opacity-95">{emergencyBanner.message}</span>
+                        </div>
                     </div>
-                    <div>
-                        <h1 className="text-xs font-black text-slate-800 tracking-tight leading-none">{t('app_title')}</h1>
-                        <span className="text-[9px] text-slate-500 font-medium">GIS Command Center</span>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setShowEmergencyDashboard(true)}
+                            className="bg-white text-red-700 font-bold px-3 py-1 rounded-full text-xs hover:bg-slate-100 transition-colors shadow-sm"
+                        >
+                            Open Action Center
+                        </button>
+                        <button
+                            onClick={() => setEmergencyBanner(null)}
+                            className="p-1 text-white/80 hover:text-white rounded-full font-bold ml-1"
+                        >
+                            ✕
+                        </button>
                     </div>
-                </div>
-
-                {/* Simulator Trigger */}
-                <button
-                    onClick={() => setShowSimulator(true)}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-lg transition-all flex items-center gap-1.5 px-3.5 py-2 font-semibold text-xs border border-indigo-500"
-                >
-                    <CloudLightning size={15} />
-                    <span>Disaster Simulator</span>
-                </button>
-
-                {/* Alerts Engine Trigger */}
-                <button
-                    onClick={() => setShowAlertsEngine(true)}
-                    className="bg-red-600 hover:bg-red-700 text-white rounded-full shadow-lg transition-all flex items-center gap-1.5 px-3.5 py-2 font-semibold text-xs border border-red-500"
-                >
-                    <Radio size={15} className="animate-pulse" />
-                    <span>Alerts Engine</span>
-                </button>
-
-                {/* Emergency Prioritisation Dashboard CTA */}
-                <button
-                    onClick={() => setShowEmergencyDashboard(true)}
-                    className="bg-slate-900 hover:bg-slate-800 text-white rounded-full shadow-lg transition-all flex items-center gap-1.5 px-3.5 py-2 font-semibold text-xs border border-slate-700"
-                >
-                    <ShieldAlert size={15} className="text-red-400" />
-                    <span>{t('emergency_dashboard')}</span>
-                </button>
-
-                {/* Report Incident CTA */}
-                <button
-                    onClick={() => setShowIncidentForm(true)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg transition-all flex items-center gap-1.5 px-3.5 py-2 font-semibold text-xs border border-blue-500"
-                >
-                    <PlusCircle size={15} />
-                    <span>{t('report_incident')}</span>
-                </button>
-
-                {/* Language Switcher */}
-                <div className="bg-white/95 backdrop-blur shadow-lg rounded-full px-3 py-1.5 flex items-center gap-1 border border-slate-200 text-xs text-slate-700">
-                    <Globe size={13} className="text-slate-400" />
-                    <select
-                        value={lang}
-                        onChange={(e) => handleLanguageChange(e.target.value)}
-                        className="bg-transparent font-semibold text-xs outline-none cursor-pointer pr-1"
-                    >
-                        {languages.map(l => (
-                            <option key={l.code} value={l.code}>{l.label}</option>
-                        ))}
-                    </select>
-                </div>
-
-                {/* Offline Status Badge */}
-                {!isOnline && (
-                    <div className="bg-amber-500 text-slate-950 font-bold text-xs px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5 border border-amber-400 animate-pulse">
-                        <WifiOff size={13} />
-                        <span>{t('offline_mode')}</span>
-                    </div>
-                )}
-            </div>
-
-            {/* Offline Sync Success Toast */}
-            {syncToast && (
-                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[1200] bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-2.5 text-xs font-semibold border border-slate-700 animate-bounce">
-                    <CheckCircle2 size={16} className="text-emerald-400" />
-                    <span>{syncToast}</span>
                 </div>
             )}
 
-            {/* Main Map View */}
-            <div className="flex-1 relative">
-                <RiskMap
-                    setSelectedDistrict={setSelectedDistrict}
-                    route={route}
-                    refreshKey={riskRefreshKey}
-                    onDataLoaded={setMapData}
+            {/* Main Application Shell with Sidebar Layout */}
+            <div className="flex h-full w-full overflow-hidden">
+                <Sidebar
+                    activeRole={activeRole}
+                    onRoleChange={handleRoleChange}
+                    lang={lang}
+                    onLangChange={handleLanguageChange}
+                    languages={languages}
+                    isOnline={isOnline}
+                    emergencyBanner={emergencyBanner}
+                    onAction={(action) => {
+                        if (action === 'home') setCurrentView('landing');
+                        if (action === 'shelter') setShowEvacuationModal(true);
+                        if (action === 'report') setShowIncidentForm(true);
+                        if (action === 'emergency') setShowEmergencyDashboard(true);
+                        if (action === 'simulator') setShowSimulator(true);
+                        if (action === 'alerts') setShowAlertsEngine(true);
+                    }}
                 />
+
+                {/* Main Map Canvas */}
+                <div className="flex-1 relative h-full">
+                    <RiskMap
+                        setSelectedDistrict={setSelectedDistrict}
+                        route={route}
+                        refreshKey={riskRefreshKey}
+                        onDataLoaded={setMapData}
+                    />
+                </div>
             </div>
+
 
             {/* Right Detail Panel */}
             {selectedDistrict && (
@@ -226,7 +217,9 @@ const App = () => {
                     lang={lang}
                     risks={mapData.risks}
                     geoJsonData={mapData.geoJsonData}
+                    activeRole={activeRole}
                     onSelectDistrict={(feature) => setSelectedDistrict(feature)}
+                    onIncidentUpdated={() => setRiskRefreshKey(k => k + 1)}
                     onClose={() => setShowEmergencyDashboard(false)}
                 />
             )}
@@ -249,6 +242,17 @@ const App = () => {
                     onClose={() => setShowAlertsEngine(false)}
                 />
             )}
+
+            {/* Emergency Evacuation & Shelter Finder Modal */}
+            <LocationEvacuationModal
+                isOpen={showEvacuationModal}
+                onClose={() => setShowEvacuationModal(false)}
+                onRouteFound={(evacRoute, shelter) => {
+                    setRoute(evacRoute);
+                    setSyncToast(`Safe evacuation route plotted to ${shelter?.name || 'Safe Shelter'}!`);
+                    setTimeout(() => setSyncToast(null), 5000);
+                }}
+            />
         </div>
     );
 };

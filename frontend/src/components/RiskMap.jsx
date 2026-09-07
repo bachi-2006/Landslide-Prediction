@@ -31,6 +31,21 @@ const incidentIcon = L.divIcon({
     popupAnchor: [0, -30]
 });
 
+const officerVerifiedIcon = L.divIcon({
+    className: 'custom-officer-pin',
+    html: `
+        <div style="position: relative; width: 34px; height: 34px;">
+            <div style="position: absolute; inset: -4px; background: rgba(37, 99, 235, 0.35); border-radius: 50%; animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
+            <div style="width: 32px; height: 32px; background: linear-gradient(135deg, #1e40af, #2563eb); border: 2.5px solid #fbbf24; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 4px 14px rgba(30, 64, 175, 0.7); display: flex; align-items: center; justify-content: center;">
+                <div style="transform: rotate(45deg); font-size: 14px;">🛡️</div>
+            </div>
+        </div>
+    `,
+    iconSize: [34, 34],
+    iconAnchor: [17, 34],
+    popupAnchor: [0, -34]
+});
+
 const riskColors = {
     'Low': '#22c55e',
     'Moderate': '#eab308',
@@ -298,62 +313,119 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded }) => {
                     </Marker>
                 )}
 
-                {showIncidents && incidents.map(inc => (
-                    <Marker key={inc.id} position={[inc.latitude, inc.longitude]} icon={incidentIcon}>
-                        <Popup className="incident-custom-popup">
-                            <div className="p-3 max-w-[280px] text-xs font-sans">
-                                <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 mb-2">
-                                    <span className="bg-red-50 text-red-700 border border-red-200 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
-                                        Citizen Hazard Report
-                                    </span>
-                                    <span className="text-[10px] text-slate-500 font-mono">
-                                        {inc.created_at ? new Date(inc.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live'}
-                                    </span>
-                                </div>
-
-                                <h3 className="font-extrabold text-slate-900 text-sm mb-1">{inc.submitted_by || 'Field Reporter'}</h3>
-                                
-                                <p className="text-slate-700 leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs mb-2.5">
-                                    {inc.description}
-                                </p>
-
-                                {inc.photo_url ? (
-                                    <div className="mb-2">
-                                        <img src={inc.photo_url} alt="Incident Evidence" className="w-full h-32 object-cover rounded-xl border border-slate-200 shadow-sm" />
-                                        <span className="text-[10px] text-slate-400 block mt-1">Field Photographic Evidence</span>
+                {showIncidents && incidents.map(inc => {
+                    const isOfficer = inc.reporter_role === 'field_officer' || (inc.submitted_by && inc.submitted_by.toLowerCase().includes('officer'));
+                    return (
+                        <Marker 
+                            key={inc.id} 
+                            position={[inc.latitude, inc.longitude]} 
+                            icon={isOfficer ? officerVerifiedIcon : incidentIcon}
+                        >
+                            <Popup className="incident-custom-popup">
+                                <div className="p-3 max-w-[290px] text-xs font-sans">
+                                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 mb-2">
+                                        {isOfficer ? (
+                                            <span className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse"></span>
+                                                🛡️ Field Officer Verified
+                                            </span>
+                                        ) : (
+                                            <span className="bg-red-50 text-red-700 border border-red-200 text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping"></span>
+                                                Citizen Community Alert
+                                            </span>
+                                        )}
+                                        <span className="text-[10px] text-slate-500 font-mono">
+                                            {inc.created_at ? new Date(inc.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live'}
+                                        </span>
                                     </div>
-                                ) : (
-                                    <div className="bg-slate-100/70 p-2 rounded-lg text-[10px] text-slate-600 mb-2 flex items-center justify-between">
-                                        <span>📍 GPS Coordinates</span>
-                                        <span className="font-mono font-bold">{Number(inc.latitude).toFixed(4)}° N, {Number(inc.longitude).toFixed(4)}° E</span>
+
+                                    <h3 className="font-extrabold text-slate-900 text-sm mb-1 flex items-center gap-1.5">
+                                        <span>{inc.submitted_by || (isOfficer ? 'SDRF Patrol Unit' : 'Community Resident')}</span>
+                                        {isOfficer && (
+                                            <span className="bg-amber-100 text-amber-800 text-[9px] font-bold px-1.5 py-0.2 rounded border border-amber-300">
+                                                Official
+                                            </span>
+                                        )}
+                                    </h3>
+                                    
+                                    <p className="text-slate-700 leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs mb-2.5">
+                                        {inc.description}
+                                    </p>
+
+                                    {inc.photo_url ? (
+                                        <div className="mb-2">
+                                            <img src={inc.photo_url} alt="Incident Evidence" className="w-full h-32 object-cover rounded-xl border border-slate-200 shadow-sm" />
+                                            <span className="text-[10px] text-slate-400 block mt-1">Field Photographic Evidence</span>
+                                        </div>
+                                    ) : (
+                                        <div className="bg-slate-100/70 p-2 rounded-lg text-[10px] text-slate-600 mb-2 flex items-center justify-between">
+                                            <span>📍 GPS Coordinates</span>
+                                            <span className="font-mono font-bold">{Number(inc.latitude).toFixed(4)}° N, {Number(inc.longitude).toFixed(4)}° E</span>
+                                        </div>
+                                    )}
+
+                                    {/* Incident Status, Assignment & Crowd Response */}
+                                    <div className="bg-slate-100/90 rounded-xl p-2.5 mb-2.5 space-y-1.5 text-[11px]">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-slate-500">Triage Status:</span>
+                                            <span className={`font-bold uppercase text-[10px] px-2 py-0.5 rounded-full ${
+                                                inc.status === 'resolved' 
+                                                    ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
+                                                    : inc.status === 'in_progress'
+                                                    ? 'bg-blue-100 text-blue-700 border border-blue-300'
+                                                    : 'bg-amber-100 text-amber-700 border border-amber-300'
+                                            }`}>
+                                                {inc.status || 'open'}
+                                            </span>
+                                        </div>
+                                        {inc.assigned_officer && (
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-slate-500">Assigned Officer:</span>
+                                                <span className="font-semibold text-slate-800">{inc.assigned_officer}</span>
+                                            </div>
+                                        )}
+                                        <div className="flex items-center justify-between border-t border-slate-200/60 pt-1">
+                                            <span className="text-slate-500">People Responded:</span>
+                                            <span className="font-bold text-blue-700 flex items-center gap-1">
+                                                👥 {inc.people_responded || 0} responded
+                                            </span>
+                                        </div>
+                                        {(inc.people_evacuated > 0) && (
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-slate-500">People Evacuated:</span>
+                                                <span className="font-bold text-emerald-700">
+                                                    🏕️ {inc.people_evacuated} safe
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
-                                )}
 
-                                {/* Real-Time Analytics & Risk Calculation CTA */}
-                                <button
-                                    onClick={() => setAnalyticsModalData({
-                                        lat: inc.latitude,
-                                        lon: inc.longitude,
-                                        label: `Hazard: ${inc.description.slice(0, 25)}...`,
-                                        incidentInfo: inc
-                                    })}
-                                    className="w-full mb-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
-                                >
-                                    <BarChart3 size={14} className="text-red-400" />
-                                    <span>View Real-Time Analytics & Risk %</span>
-                                </button>
+                                    {/* Real-Time Analytics & Risk Calculation CTA */}
+                                    <button
+                                        onClick={() => setAnalyticsModalData({
+                                            lat: inc.latitude,
+                                            lon: inc.longitude,
+                                            label: `${isOfficer ? 'Officer Hazard' : 'Citizen Hazard'}: ${inc.description.slice(0, 25)}...`,
+                                            incidentInfo: inc
+                                        })}
+                                        className="w-full mb-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                                    >
+                                        <BarChart3 size={14} className={isOfficer ? "text-blue-400" : "text-red-400"} />
+                                        <span>Calculate Regional & Point Analytics</span>
+                                    </button>
 
-                                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
-                                    <span className="text-emerald-600 font-bold flex items-center gap-1">
-                                        ✓ Synced to HQ & Mobile
-                                    </span>
-                                    <span>{inc.created_at ? new Date(inc.created_at).toLocaleDateString() : 'Today'}</span>
+                                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
+                                        <span className="text-emerald-600 font-bold flex items-center gap-1">
+                                            ✓ {isOfficer ? 'SDRF Logged' : 'Crowd Verified'}
+                                        </span>
+                                        <span>{inc.created_at ? new Date(inc.created_at).toLocaleDateString() : 'Today'}</span>
+                                    </div>
                                 </div>
-                            </div>
-                        </Popup>
-                    </Marker>
-                ))}
+                            </Popup>
+                        </Marker>
+                    );
+                })}
             </MapContainer>
 
             {/* GIS Floating Control & Legend Panel */}
@@ -418,14 +490,27 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded }) => {
 
                                 <label className="flex items-center justify-between p-2 rounded-lg bg-slate-50 hover:bg-slate-100 cursor-pointer transition-colors">
                                     <span className="flex items-center gap-2">
-                                        <MapPin size={12} className="text-blue-600" />
-                                        <span>Citizen Reports</span>
+                                        <span className="text-xs">🛡️</span>
+                                        <span className="font-semibold text-blue-950">Field Officer Reports</span>
                                     </span>
                                     <input 
                                         type="checkbox" 
                                         checked={showIncidents} 
                                         onChange={() => setShowIncidents(!showIncidents)}
                                         className="cursor-pointer accent-blue-600 rounded" 
+                                    />
+                                </label>
+
+                                <label className="flex items-center justify-between p-2 rounded-lg bg-slate-50 hover:bg-slate-100 cursor-pointer transition-colors">
+                                    <span className="flex items-center gap-2">
+                                        <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-ping"></span>
+                                        <span>Citizen Hazard Pins</span>
+                                    </span>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={showIncidents} 
+                                        onChange={() => setShowIncidents(!showIncidents)}
+                                        className="cursor-pointer accent-red-600 rounded" 
                                     />
                                 </label>
                             </div>

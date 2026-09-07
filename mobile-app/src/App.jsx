@@ -42,6 +42,8 @@ import DistrictDetailSheet from './components/DistrictDetailSheet';
 import NotificationCenterModal from './components/NotificationCenterModal';
 import ProfileModal from './components/ProfileModal';
 import EmergencyAlertBanner from './components/EmergencyAlertBanner';
+import EvacuationModal from './components/EvacuationModal';
+import OfficerIncidentModal from './components/OfficerIncidentModal';
 
 const defaultDistricts = [
   { id: 'IN-ML-01', name: 'East Khasi Hills', state: 'Meghalaya', risk: 'High', score: 78, color: 'high' },
@@ -60,9 +62,14 @@ function App() {
   const [reported, setReported] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   
-  // Modals
+  // Modals & Persona
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showEvacuation, setShowEvacuation] = useState(false);
+  const [activeOfficerIncident, setActiveOfficerIncident] = useState(null);
+  const [userRole, setUserRole] = useState(() => {
+    return (typeof window !== 'undefined' && localStorage.getItem('neshield_user_role')) || 'citizen';
+  });
   const [inspectingDistrict, setInspectingDistrict] = useState(null);
   const [activeEmergencyAlert, setActiveEmergencyAlert] = useState(null);
 
@@ -213,6 +220,21 @@ function App() {
           </div>
         </div>
         <div className="top-actions">
+          <span 
+            onClick={() => setShowProfile(true)}
+            style={{ 
+              fontSize: '10px', 
+              fontWeight: 'bold', 
+              padding: '4px 8px', 
+              borderRadius: '6px', 
+              background: userRole === 'admin' ? '#fee2e2' : userRole === 'field_officer' ? '#e0f2fe' : '#f1f5f9',
+              color: userRole === 'admin' ? '#991b1b' : userRole === 'field_officer' ? '#0369a1' : '#475569',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {userRole === 'admin' ? '🚨 Admin' : userRole === 'field_officer' ? '🛡️ Officer' : '👤 Citizen'}
+          </span>
           {!isOnline && <span className="offline-pill"><WifiOff size={13} /> Offline</span>}
           <button 
             className="icon-button" 
@@ -330,7 +352,7 @@ function App() {
           </section>
 
           {/* Quick Action Cards */}
-          <section className="quick-actions">
+          <section className="quick-actions" style={{ gridTemplateColumns: '1fr 1fr 1fr' }}>
             <button 
               className="action-card report" 
               onClick={() => {
@@ -338,8 +360,20 @@ function App() {
                 setShowReport(true);
               }}
             >
-              <span className="action-icon"><Plus size={21} /></span>
-              <span><strong>Report hazard</strong><small>Upload photo & GPS</small></span>
+              <span className="action-icon"><Plus size={19} /></span>
+              <span><strong>Report hazard</strong><small>Photo & GPS</small></span>
+            </button>
+
+            <button 
+              className="action-card" 
+              style={{ background: '#ecfdf5', borderColor: '#a7f3d0' }}
+              onClick={() => {
+                soundEngine.playChime();
+                setShowEvacuation(true);
+              }}
+            >
+              <span className="action-icon" style={{ background: '#10b981', color: 'white' }}><Navigation size={19} /></span>
+              <span><strong>Evacuate</strong><small>Shelter & safe path</small></span>
             </button>
 
             <button 
@@ -349,8 +383,8 @@ function App() {
                 setActiveTab('routes');
               }}
             >
-              <span className="action-icon"><Route size={21} /></span>
-              <span><strong>Safe routes</strong><small>Live road clearance</small></span>
+              <span className="action-icon"><Route size={19} /></span>
+              <span><strong>Safe roads</strong><small>PWD clearance</small></span>
             </button>
           </section>
 
@@ -372,20 +406,38 @@ function App() {
                 key={alert.id || alert.title}
                 onClick={() => {
                   soundEngine.playChime();
-                  setActiveTab('map');
+                  if (userRole === 'field_officer' || userRole === 'admin') {
+                    const matchedInc = rawIncidents.find(i => i.id === alert.id) || {
+                      id: alert.id || 'inc-01',
+                      title: alert.title,
+                      description: alert.text,
+                      status: 'open',
+                      latitude: alert.latitude || 25.5788,
+                      longitude: alert.longitude || 91.8933,
+                      people_responded: 2,
+                    };
+                    setActiveOfficerIncident(matchedInc);
+                  } else {
+                    setActiveTab('map');
+                  }
                 }}
                 style={{ cursor: 'pointer' }}
               >
                 <span className={`alert-icon ${alert.color}`}>
                   {alert.color === 'red' ? <Siren size={17} /> : <FileWarning size={17} />}
                 </span>
-                <div>
+                <div style={{ flex: 1 }}>
                   <div className="alert-meta">
                     <span>{alert.type}</span>
                     <time>{alert.time}</time>
                   </div>
                   <strong>{alert.title}</strong>
                   <p>{alert.text}</p>
+                  {(userRole === 'field_officer' || userRole === 'admin') && (
+                    <span style={{ fontSize: '10px', color: '#0284c7', fontWeight: 'bold', display: 'inline-block', marginTop: '2px' }}>
+                      🛡️ Tap to Dispatch & Resolve Incident →
+                    </span>
+                  )}
                 </div>
               </article>
             ))}
@@ -425,7 +477,11 @@ function App() {
 
       {/* 3. SAFE ROUTES & EVACUATION TAB */}
       {activeTab === 'routes' && (
-        <RoutesView roadCorridors={roadCorridors} onRefresh={fetchLiveData} />
+        <RoutesView 
+          roadCorridors={roadCorridors} 
+          onRefresh={fetchLiveData} 
+          onOpenEvacuation={() => setShowEvacuation(true)}
+        />
       )}
 
       {/* 4. ALERTS, SIRENS & SAFETY TAB */}
@@ -462,6 +518,19 @@ function App() {
         <ProfileModal onClose={() => setShowProfile(false)} isOnline={isOnline} />
       )}
 
+      {showEvacuation && (
+        <EvacuationModal onClose={() => setShowEvacuation(false)} />
+      )}
+
+      {activeOfficerIncident && (
+        <OfficerIncidentModal 
+          incident={activeOfficerIncident}
+          userRole={userRole}
+          onClose={() => setActiveOfficerIncident(null)}
+          onUpdated={fetchLiveData}
+        />
+      )}
+
       {showReport && (
         <ReportSheet onClose={() => setShowReport(false)} onSubmit={submitReport} />
       )}
@@ -491,7 +560,7 @@ function NavButton({ active, label, icon, onClick }) {
   );
 }
 
-function RoutesView({ roadCorridors = [], onRefresh }) {
+function RoutesView({ roadCorridors = [], onRefresh, onOpenEvacuation }) {
   const [origin, setOrigin] = useState('Shillong, Meghalaya');
   const [destination, setDestination] = useState('Cherrapunji, Meghalaya');
 
@@ -521,6 +590,34 @@ function RoutesView({ roadCorridors = [], onRefresh }) {
           <RefreshCw size={18} />
         </button>
       </section>
+
+      {/* Direct Shelter & Disaster Evacuation Modal Trigger */}
+      {onOpenEvacuation && (
+        <button
+          type="button"
+          onClick={onOpenEvacuation}
+          style={{
+            width: '100%',
+            background: '#0f5c5d',
+            color: 'white',
+            border: 'none',
+            borderRadius: '12px',
+            padding: '12px 14px',
+            fontSize: '12px',
+            fontWeight: 'bold',
+            marginBottom: '14px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            boxShadow: '0 2px 6px rgba(15,92,93,0.2)'
+          }}
+        >
+          <Navigation size={17} />
+          <span>Locate Nearest Shelter & Personalized Precautions →</span>
+        </button>
+      )}
 
       {/* Origin / Destination Search Box */}
       <div className="route-search">

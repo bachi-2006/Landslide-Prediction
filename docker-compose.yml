@@ -9,7 +9,6 @@ services:
       - .env
     volumes:
       - ./backend/ml:/app/backend/ml
-      - ./firebase-service-account.json:/app/firebase-service-account.json:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
@@ -30,8 +29,9 @@ services:
         VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
         VITE_FIREBASE_VAPID_KEY: ${VITE_FIREBASE_VAPID_KEY:-}
     ports:
-      - "5173:5173"
+      - "3000:3000"
     depends_on:
       backend:
         condition: service_healthy
     restart: always
+

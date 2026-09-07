@@ -5,7 +5,8 @@ import { soundEngine } from '../services/soundEngine';
 export default function ProfileModal({ onClose, isOnline }) {
   const [name, setName] = useState(() => localStorage.getItem('ne_citizen_name') || 'Field Citizen');
   const [icePhone, setIcePhone] = useState(() => localStorage.getItem('ne_ice_phone') || '+91 98765 43210');
-  const [district, setDistrict] = useState(() => localStorage.getItem('ne_user_district') || 'East Khasi Hills');
+  const [role, setRole] = useState(() => localStorage.getItem('neshield_user_role') || 'citizen');
+  const [apiHost, setApiHost] = useState(() => localStorage.getItem('neshield_api_host') || 'http://10.82.15.222:8000');
   const [saved, setSaved] = useState(false);
 
   const handleSave = (e) => {
@@ -13,9 +14,15 @@ export default function ProfileModal({ onClose, isOnline }) {
     localStorage.setItem('ne_citizen_name', name);
     localStorage.setItem('ne_ice_phone', icePhone);
     localStorage.setItem('ne_user_district', district);
+    localStorage.setItem('neshield_user_role', role);
+    localStorage.setItem('neshield_api_host', apiHost);
     soundEngine.playChime();
     setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    setTimeout(() => {
+      setSaved(false);
+      onClose();
+      window.location.reload();
+    }, 800);
   };
 
   return (
@@ -23,7 +30,7 @@ export default function ProfileModal({ onClose, isOnline }) {
       <section 
         className="report-sheet" 
         onClick={(e) => e.stopPropagation()}
-        style={{ maxHeight: '85vh', overflowY: 'auto' }}
+        style={{ maxHeight: '88vh', overflowY: 'auto' }}
       >
         <div className="sheet-handle" />
 
@@ -33,8 +40,8 @@ export default function ProfileModal({ onClose, isOnline }) {
               <UserRound size={18} />
             </div>
             <div>
-              <p className="section-kicker">USER IDENTITY & ICE</p>
-              <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '800' }}>Citizen Profile</h2>
+              <p className="section-kicker">RBAC & PREFERENCES</p>
+              <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '800' }}>User Profile & Persona</h2>
             </div>
           </div>
           <button className="icon-button subtle" onClick={onClose} aria-label="Close">
@@ -47,8 +54,8 @@ export default function ProfileModal({ onClose, isOnline }) {
           background: isOnline ? '#ecfdf5' : '#fffbeb',
           border: `1px solid ${isOnline ? '#a7f3d0' : '#fde68a'}`,
           borderRadius: '14px',
-          padding: '12px 14px',
-          marginBottom: '16px',
+          padding: '10px 14px',
+          marginBottom: '14px',
           display: 'flex',
           alignItems: 'center',
           gap: '8px'
@@ -61,13 +68,29 @@ export default function ProfileModal({ onClose, isOnline }) {
           ) : (
             <span style={{ color: '#b45309', fontWeight: 'bold', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <WifiOff size={14} />
-              Offline Mode Active (Cached telemetry & local hotspot enabled)
+              Offline Mode Active (Cached telemetry enabled)
             </span>
           )}
         </div>
 
         {/* Profile & ICE Form */}
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '18px' }}>
+          {/* RBAC Role Selector */}
+          <div>
+            <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>
+              System Persona / Role (RBAC)
+            </label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '12px', background: 'white', fontWeight: 'bold' }}
+            >
+              <option value="citizen">👤 Citizen (Report & Evacuate)</option>
+              <option value="field_officer">🛡️ Field Officer / SDRF (Triage & Resolve)</option>
+              <option value="admin">🚨 Admin / SEOC Commander (Assign & Sirens)</option>
+            </select>
+          </div>
+
           <div>
             <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>
               Your Name / Callsign
@@ -82,7 +105,7 @@ export default function ProfileModal({ onClose, isOnline }) {
 
           <div>
             <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>
-              In Case of Emergency (ICE) Phone Number
+              Emergency (ICE) Phone Number
             </label>
             <input 
               type="tel" 
@@ -105,13 +128,29 @@ export default function ProfileModal({ onClose, isOnline }) {
             />
           </div>
 
+          <div>
+            <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>
+              Backend API Host (IP / URL)
+            </label>
+            <input 
+              type="text" 
+              value={apiHost} 
+              onChange={(e) => setApiHost(e.target.value)}
+              placeholder="http://10.82.15.222:8000"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '12px', fontFamily: 'monospace' }}
+            />
+            <small style={{ fontSize: '10px', color: '#64748b', marginTop: '2px', display: 'block' }}>
+              Tip: Use 10.0.2.2:8000 in Android Emulator, or LAN IP on physical device.
+            </small>
+          </div>
+
           <button 
             type="submit"
             className="primary-button" 
             style={{ padding: '11px', fontSize: '12px', marginTop: '4px' }}
           >
             <Save size={15} />
-            <span>{saved ? 'Settings Saved ✓' : 'Save Safety Profile'}</span>
+            <span>{saved ? 'Settings Saved ✓' : 'Save Safety Profile & Apply Role'}</span>
           </button>
         </form>
 

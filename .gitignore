@@ -4,32 +4,40 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+.pytest_cache/
 
-# Env files
+# Secrets & Environment
 .env
-.env.local
-.env.*.local
-firebase-service-account*.json
+.env.*
+*.env
+*.pem
+*.key
+*service-account*.json
+*credentials*.json
+secrets/
 
-# Downloaded source files and intermediate conversion artifacts
+# Downloaded source files and large raw dumps (>100MB)
 data/raw/
 
 # Node / Frontend
 node_modules/
 dist/
 frontend/dist/
+mobile-app/dist/
 
-# ML artifacts
-# backend/ml/*.joblib is tracked for out-of-the-box demo functionality
+# Android & Mobile Build Artifacts
+*.apk
+release/
+mobile-app/android/.gradle/
+mobile-app/android/build/
+mobile-app/android/app/build/
+mobile-app/android/local.properties
+mobile-app/android/capacitor-cordova-android-plugins/
 
-# OS / Editors
+# OS / Editors / Archives
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
 *.zip
-*.apk
-mobile-app/dist/
-mobile-app/android/.gradle/
-mobile-app/android/build/
-mobile-app/android/app/build/
+*.log
