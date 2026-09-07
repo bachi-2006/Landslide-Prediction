@@ -54,6 +54,8 @@ export default function RoleAuthModal({ isOpen, onClose, onAuthSuccess }) {
                 if (district) localStorage.setItem('ne_user_district', district);
                 localStorage.setItem('ne_shield_user_profile', JSON.stringify(userProfile));
                 if (resp.data.token) {
+                    sessionStorage.setItem('neshield_auth_token', resp.data.token);
+                    localStorage.setItem('neshield_auth_token', resp.data.token);
                     localStorage.setItem('ne_shield_auth_token', resp.data.token);
                 }
 

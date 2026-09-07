@@ -14,7 +14,7 @@ import logging
 from datetime import datetime, timezone
 
 from backend.db.supabase_client import get_supabase
-from backend.services.auth import ADMIN_KEY, OFFICER_KEY
+from backend.services.auth import ADMIN_KEY, OFFICER_KEY, create_session
 
 logger = logging.getLogger("auth_router")
 
@@ -63,8 +63,8 @@ class UserProfile(BaseModel):
 async def login_or_register(req: AuthRequest):
     """
     Authenticate user into the requested RBAC role:
-    - field_officer: requires password '9'
-    - admin: requires password '99'
+    - field_officer: requires password '9', generates dynamic session token
+    - admin: requires password '99', generates dynamic session token
     - citizen: registers user record directly into Supabase (or in-memory cache) with no password.
     """
     requested_role = req.role.strip().lower()
@@ -75,13 +75,15 @@ async def login_or_register(req: AuthRequest):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid Admin Password. Access Denied."
             )
+        admin_name = req.name.strip() or "SEOC State Commander"
+        token = create_session(role="admin", user_name=admin_name, district=req.district or "Meghalaya State HQ")
         return {
             "success": True,
             "role": "admin",
-            "token": ADMIN_KEY,
+            "token": token,
             "user": {
                 "id": str(uuid.uuid4()),
-                "name": req.name.strip() or "SEOC State Commander",
+                "name": admin_name,
                 "role": "admin",
                 "unit": "NDMA / State Emergency Operations Center",
                 "district": req.district or "Meghalaya State HQ"
@@ -94,13 +96,20 @@ async def login_or_register(req: AuthRequest):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid Field Officer Password. Access Denied."
             )
+        officer_name = req.name.strip() or "Insp. K. Sangma"
+        token = create_session(
+            role="field_officer", 
+            user_name=officer_name, 
+            district=req.district or "East Khasi Hills",
+            unit=req.unit.strip() or "SDRF Rapid Response Team 1"
+        )
         return {
             "success": True,
             "role": "field_officer",
-            "token": OFFICER_KEY,
+            "token": token,
             "user": {
                 "id": str(uuid.uuid4()),
-                "name": req.name.strip() or "Insp. K. Sangma",
+                "name": officer_name,
                 "role": "field_officer",
                 "unit": req.unit.strip() or "SDRF Rapid Response Team 1",
                 "district": req.district or "East Khasi Hills"
@@ -134,10 +143,11 @@ async def login_or_register(req: AuthRequest):
         if not saved_db:
             IN_MEMORY_USERS.insert(0, user_record)
 
+        token = create_session(role="citizen", user_name=citizen_name, district=user_record["district"])
         return {
             "success": True,
             "role": "citizen",
-            "token": "citizen-session-token",
+            "token": token,
             "user": user_record
         }
 

@@ -2,19 +2,33 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
-// API keys loaded from env (dev defaults are safe for local use only)
-const OFFICER_KEY = import.meta.env.VITE_OFFICER_API_KEY || 'ne-shield-officer-key-2026';
-const ADMIN_KEY   = import.meta.env.VITE_ADMIN_API_KEY   || 'ne-shield-admin-key-2026';
+// Retrieve ephemeral runtime session token issued by /api/auth/login
+const getAuthToken = () => {
+    if (typeof window === 'undefined') return '';
+    return sessionStorage.getItem('neshield_auth_token') ||
+           localStorage.getItem('neshield_auth_token') ||
+           localStorage.getItem('ne_shield_auth_token') || '';
+};
 
 const api = axios.create({
     baseURL: API_BASE_URL.replace(/\/$/, ''),
     timeout: 15000,
 });
 
-/** Returns auth header object for a given role */
-const authHeader = (role = 'admin') => ({
-    Authorization: `Bearer ${role === 'admin' ? ADMIN_KEY : OFFICER_KEY}`
+// Attach session token dynamically if user is logged in
+api.interceptors.request.use((config) => {
+    const token = getAuthToken();
+    if (token && !config.headers.Authorization) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
 });
+
+/** Returns auth header object dynamically from active session */
+const authHeader = () => {
+    const token = getAuthToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 export const riskService = {
     getAllRisks: () => api.get('/risk'),

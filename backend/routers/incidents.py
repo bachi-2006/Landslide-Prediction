@@ -166,11 +166,13 @@ class AssignOfficerRequest(BaseModel):
 async def assign_incident(
     incident_id: str,
     req: AssignOfficerRequest,
-    _: str = Depends(require_admin)  # Admin only
+    caller = Depends(require_admin)  # Admin only
 ):
     """Admin assigns a field officer to an incident. Writes to Supabase."""
+    admin_callsign = getattr(caller, 'name', 'SEOC Admin')
     update_data = {
         "assigned_officer": f"{req.officer_name} ({req.officer_unit})",
+        "assigned_by": admin_callsign,
         "status": "assigned",
         "dispatched_personnel": req.dispatched_personnel,
         "assigned_at": datetime.utcnow().isoformat() + "Z"
@@ -250,12 +252,16 @@ class ResolveIncidentRequest(BaseModel):
 async def resolve_incident(
     incident_id: str,
     req: ResolveIncidentRequest,
-    _: str = Depends(require_officer)  # Field Officer or Admin
+    caller = Depends(require_officer)  # Field Officer or Admin
 ):
     """Field officer closes an issue and confirms ground clearance. Writes to Supabase."""
+    verified_name = getattr(caller, 'name', req.officer_name)
+    verified_role = getattr(caller, 'role', 'field_officer')
     resolve_data = {
         "status": "resolved",
         "resolved_by": req.officer_name,
+        "resolved_by_account": verified_name,
+        "resolved_role": verified_role,
         "resolution_summary": req.resolution_summary,
         "road_cleared": req.road_cleared,
         "resolved_at": datetime.utcnow().isoformat() + "Z"

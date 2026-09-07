@@ -19,15 +19,13 @@ export const getApiBaseUrl = () => {
 // Dynamic Base URL resolver that checks custom settings on each call
 const BASE_URL = { toString: () => getApiBaseUrl() };
 
-const getAuthHeader = (role = 'citizen') => {
-  if (typeof window !== 'undefined' && window.localStorage) {
-    const savedRole = localStorage.getItem('neshield_user_role') || role;
-    if (savedRole === 'admin' || savedRole === 'seoc') {
-      return { 'Authorization': 'Bearer ne-shield-admin-key-2026' };
-    }
-    if (savedRole === 'field_officer' || savedRole === 'officer' || savedRole === 'sdrf') {
-      return { 'Authorization': 'Bearer ne-shield-officer-key-2026' };
-    }
+// Retrieve dynamic runtime session token issued by backend
+const getAuthHeader = () => {
+  if (typeof window !== 'undefined') {
+    const token = sessionStorage.getItem('neshield_auth_token') ||
+                  localStorage.getItem('neshield_auth_token') ||
+                  localStorage.getItem('ne_shield_auth_token') || '';
+    if (token) return { 'Authorization': `Bearer ${token}` };
   }
   return {};
 };
@@ -40,7 +38,14 @@ export const mobileApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    return res.json();
+    const data = await res.json();
+    if (data && data.token) {
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('neshield_auth_token', data.token);
+        localStorage.setItem('neshield_auth_token', data.token);
+      }
+    }
+    return data;
   },
 
   // 1. District Risks

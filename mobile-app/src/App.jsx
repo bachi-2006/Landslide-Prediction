@@ -36,6 +36,7 @@ import { Geolocation } from '@capacitor/geolocation';
 import { mobileApi } from './services/api';
 import { soundEngine } from './services/soundEngine';
 import { notificationService } from './services/notifications';
+import { subscribeToMapUpdates } from './services/supabase';
 
 import MobileMapView from './components/MobileMapView';
 import DistrictDetailSheet from './components/DistrictDetailSheet';
@@ -156,8 +157,14 @@ function App() {
 
   useEffect(() => {
     fetchLiveData();
-    const interval = setInterval(fetchLiveData, 5000);
-    return () => clearInterval(interval);
+    // 1. Supabase Realtime WebSocket push for instant multi-client sync
+    const unsubscribe = subscribeToMapUpdates(fetchLiveData);
+    // 2. Battery & data efficient fallback poll (relaxed to 30s)
+    const interval = setInterval(fetchLiveData, 30000);
+    return () => {
+      if (unsubscribe) unsubscribe();
+      clearInterval(interval);
+    };
   }, []);
 
   const handleManualRefresh = async () => {
