@@ -907,33 +907,32 @@ async def generate_locality_offline_pack(req: OfflinePackRequest):
         "supply":  "#f59e0b"   # Amber Orange - Food & Drinking Water Route
     }
 
-    paths = []
-    centres_enriched = []
-
-    for c in chosen_centres:
+    async def resolve_path_for_centre(c):
         c_lat, c_lon = c["latitude"], c["longitude"]
         dist_km = round(((target_lat - c_lat)**2 + (target_lon - c_lon)**2)**0.5 * 111.0, 2)
         est_min = max(4, round((dist_km / 22.0) * 60))
 
-        c["distance_km"] = dist_km
-        c["est_travel_time_min"] = est_min
-        centres_enriched.append(c)
+        c_copy = dict(c)
+        c_copy["distance_km"] = dist_km
+        c_copy["est_travel_time_min"] = est_min
 
-        # Attempt routing engine first
         route_coords = None
         route_dist = dist_km
         route_dur = est_min
 
         try:
-            route_data = await get_alternative_route((target_lat, target_lon), (c_lat, c_lon))
+            route_data = await asyncio.wait_for(
+                get_alternative_route((target_lat, target_lon), (c_lat, c_lon)),
+                timeout=2.0
+            )
             if route_data and route_data.get("geometry") and route_data["geometry"].get("coordinates"):
                 route_coords = route_data["geometry"]["coordinates"]
                 route_dist = round(route_data.get("distance", dist_km * 1000) / 1000.0, 2)
                 route_dur = max(4, round(route_data.get("duration", est_min * 60) / 60.0))
-        except Exception as e:
-            logger.warning(f"Routing call for offline pack path fallback: {e}")
+        except Exception:
+            pass
 
-        # If routing engine was unreachable or returned empty, use robust terrain curve
+        # If routing engine timed out, was unreachable, or returned empty, use robust terrain curve
         if not route_coords:
             fallback = generate_offline_path(target_lat, target_lon, c_lat, c_lon)
             route_coords = fallback["coordinates"]
@@ -941,7 +940,7 @@ async def generate_locality_offline_pack(req: OfflinePackRequest):
             route_dur = fallback["duration_min"]
 
         cat = c.get("category", "shelter")
-        paths.append({
+        path_item = {
             "centre_id": c["id"],
             "centre_name": c["name"],
             "category": cat,
@@ -950,7 +949,12 @@ async def generate_locality_offline_pack(req: OfflinePackRequest):
             "distance_km": route_dist,
             "duration_min": route_dur,
             "coordinates": route_coords
-        })
+        }
+        return c_copy, path_item
+
+    results = await asyncio.gather(*[resolve_path_for_centre(c) for c in chosen_centres])
+    centres_enriched = [r[0] for r in results]
+    paths = [r[1] for r in results]
 
     # 6. Compute bounding box
     all_lats = [target_lat] + [c["latitude"] for c in centres_enriched]
@@ -961,13 +965,22 @@ async def generate_locality_offline_pack(req: OfflinePackRequest):
         round(max(all_lons) + 0.03, 4),
         round(max(all_lats) + 0.03, 4)
     ]
+    bbox_dict = {
+        "south": min(all_lats) - 0.03,
+        "west": min(all_lons) - 0.03,
+        "north": max(all_lats) + 0.03,
+        "east": max(all_lons) + 0.03
+    }
 
     pack = {
         "pack_id": f"pack-{resolved_locality['id']}",
         "locality": resolved_locality,
         "user_coordinates": {"lat": target_lat, "lon": target_lon},
-        "bounding_box": bounding_box,
+        "user_location": {"lat": target_lat, "lon": target_lon},
+        "bounding_box": bbox_dict,
+        "bbox": bounding_box,
         "centres": centres_enriched,
+        "nearest_centres": centres_enriched,
         "paths": paths,
         "offline_advisory": [
             "Keep this offline map pack open; it operates with zero cellular or GPS tower connectivity.",
@@ -975,12 +988,18 @@ async def generate_locality_offline_pack(req: OfflinePackRequest):
             "Emergency rations and clean drinking water are available at the marked Supply Hub.",
             "If stranded, click 'Request Emergency Aid' to generate an offline SOS ticket for search teams."
         ],
+        "safety_instructions": [
+            "Stay strictly on designated high-ground ridges; never seek shelter in river valleys.",
+            "Avoid newly formed roadside water streams which indicate sudden subterranean blockages.",
+            "Keep emergency radio powered; relief supplies are replenished every 12 hours."
+        ],
         "emergency_contacts": [
             {"label": "National Emergency Service", "number": "112"},
             {"label": "State Disaster Control Room (SEOC)", "number": "1078"},
             {"label": "Ambulance & Trauma Care", "number": "108"},
             {"label": "SDRF Disaster Response Command", "number": "1070"}
         ],
+        "cached_at": datetime.utcnow().isoformat() + "Z",
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "cache_version": "2.0"
     }
