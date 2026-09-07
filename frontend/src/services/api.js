@@ -65,6 +65,10 @@ export const routeService = {
     getRoadStatus: (districtId = null) => api.get('/route/status', { params: { district_id: districtId } }),
     getShelters: (lat = null, lon = null) => api.get('/route/shelters', { params: { lat, lon } }),
     calculateEvacuation: (payload) => api.post('/route/evacuate', payload),
+    getLocalities: () => api.get('/route/localities'),
+    getOfflinePack: (payload) => api.post('/route/offline-pack', payload),
+    submitReliefRequest: (payload) => api.post('/route/relief-requests', payload),
+    getReliefRequests: (params = {}) => api.get('/route/relief-requests', { params }),
 };
 
 export const alertService = {

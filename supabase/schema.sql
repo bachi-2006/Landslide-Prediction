@@ -166,3 +166,22 @@ begin
         execute 'alter publication supabase_realtime add table public.incidents';
     end if;
 end $$;
+
+-- Citizen SOS Relief Aid Requests (Food, Water, Medical, Evacuation)
+create table if not exists public.relief_requests (
+    id text primary key,
+    user_name text not null,
+    phone text,
+    locality_name text not null,
+    lat double precision not null,
+    lon double precision not null,
+    aid_type text not null default 'food',
+    people_count integer not null default 1,
+    urgency text not null default 'High',
+    status text not null default 'pending',
+    dispatched_centre text,
+    notes text,
+    created_at timestamptz not null default now()
+);
+create index if not exists idx_relief_requests_created on public.relief_requests (created_at desc);
+

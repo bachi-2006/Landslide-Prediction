@@ -135,3 +135,74 @@ def test_incident_reporter_role_verification():
             assert resp_auth.json()['data']['verification_status'] == 'verified'
     run_async(_test())
 
+def test_get_ner_localities():
+    async def _test():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
+            resp = await client.get('/api/route/localities')
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data['success'] is True
+            assert len(data['data']) >= 16
+            assert any(loc['id'] == 'loc-shillong' for loc in data['data'])
+            assert any(loc['id'] == 'loc-sohra' for loc in data['data'])
+    run_async(_test())
+
+def test_generate_offline_pack():
+    async def _test():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
+            resp = await client.post('/api/route/offline-pack', json={'locality_id': 'loc-shillong'})
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data['success'] is True
+            pack = data['data']
+            assert pack['locality']['id'] == 'loc-shillong'
+            # Must return 3 nearest relief centres
+            assert len(pack['centres']) == 3
+            # Must return 3 distinct paths with valid GeoJSON coordinate lists
+            assert len(pack['paths']) == 3
+            for path in pack['paths']:
+                assert 'coordinates' in path
+                assert len(path['coordinates']) >= 2
+                assert 'color' in path
+                assert 'distance_km' in path
+            # Must include emergency contacts and offline advisory
+            assert len(pack['offline_advisory']) >= 3
+            assert len(pack['emergency_contacts']) >= 3
+    run_async(_test())
+
+def test_relief_requests():
+    async def _test():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
+            # 1. Create a request for food and potable water
+            post_resp = await client.post(
+                '/api/route/relief-requests',
+                json={
+                    'user_name': 'Mary Nongkynrih',
+                    'phone': '+91-98620-99887',
+                    'locality_name': 'Mawlai, Shillong',
+                    'lat': 25.5920,
+                    'lon': 91.8840,
+                    'aid_type': 'food',
+                    'people_count': 5,
+                    'urgency': 'Critical',
+                    'notes': 'Landslide cut road access; family needs rations and water.'
+                }
+            )
+            assert post_resp.status_code == 200
+            post_data = post_resp.json()
+            assert post_data['success'] is True
+            assert 'SOS-' in post_data['request_id']
+
+            # 2. Get list of relief requests
+            get_resp = await client.get('/api/route/relief-requests')
+            assert get_resp.status_code == 200
+            get_data = get_resp.json()
+            assert get_data['success'] is True
+            assert len(get_data['data']) >= 1
+            assert any(r['user_name'] == 'Mary Nongkynrih' for r in get_data['data'])
+    run_async(_test())
+
+

@@ -7,6 +7,7 @@ import LandingPage from './components/LandingPage';
 import DisasterSimulator from './components/DisasterSimulator';
 import AlertsEngine from './components/AlertsEngine';
 import LocationEvacuationModal from './components/LocationEvacuationModal';
+import OfflineReliefModal from './components/OfflineReliefModal';
 import Sidebar from './components/Sidebar';
 import RoleAuthModal from './components/RoleAuthModal';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
@@ -24,6 +25,7 @@ const App = () => {
     const [showSimulator, setShowSimulator] = useState(false);
     const [showAlertsEngine, setShowAlertsEngine] = useState(false);
     const [showEvacuationModal, setShowEvacuationModal] = useState(false);
+    const [showOfflineModal, setShowOfflineModal] = useState(false);
     const [showRoleModal, setShowRoleModal] = useState(() => !localStorage.getItem('ne_shield_active_role'));
     const [activeRole, setActiveRole] = useState(() => rbac.getCurrentRole());
     const [emergencyBanner, setEmergencyBanner] = useState(null);
@@ -178,6 +180,7 @@ const App = () => {
                     emergencyBanner={emergencyBanner}
                     onAction={(action) => {
                         if (action === 'home') setCurrentView('landing');
+                        if (action === 'offline_map') setShowOfflineModal(true);
                         if (action === 'shelter') setShowEvacuationModal(true);
                         if (action === 'report') setShowIncidentForm(true);
                         if (action === 'emergency') setShowEmergencyDashboard(true);
@@ -262,6 +265,12 @@ const App = () => {
                     setSyncToast(`Safe evacuation route plotted to ${shelter?.name || 'Safe Shelter'}!`);
                     setTimeout(() => setSyncToast(null), 5000);
                 }}
+            />
+
+            {/* Offline Sector Map & Relief SOS Modal */}
+            <OfflineReliefModal
+                isOpen={showOfflineModal}
+                onClose={() => setShowOfflineModal(false)}
             />
 
             {/* RBAC Role & Identity Selector Modal */}

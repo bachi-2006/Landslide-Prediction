@@ -109,6 +109,45 @@ export const mobileApi = {
     return res.json();
   },
 
+  async getLocalities() {
+    const res = await fetch(`${BASE_URL}/api/route/localities`);
+    if (!res.ok) throw new Error('Failed to fetch localities');
+    return res.json();
+  },
+
+  async getOfflinePack(payload) {
+    const res = await fetch(`${BASE_URL}/api/route/offline-pack`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to download offline sector pack');
+    }
+    return res.json();
+  },
+
+  async submitReliefRequest(payload) {
+    const res = await fetch(`${BASE_URL}/api/route/relief-requests`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to submit relief request');
+    }
+    return res.json();
+  },
+
+  async getReliefRequests(localityId = null) {
+    const query = localityId ? `?locality_id=${encodeURIComponent(localityId)}` : '';
+    const res = await fetch(`${BASE_URL}/api/route/relief-requests${query}`);
+    if (!res.ok) throw new Error('Failed to fetch relief requests');
+    return res.json();
+  },
+
   // 4. Incidents & Officer Assignment / Resolution
   async getIncidents() {
     const res = await fetch(`${BASE_URL}/api/incidents`);

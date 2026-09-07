@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
     Home, PlusCircle, ShieldAlert, CloudLightning, Radio, Navigation,
-    ChevronLeft, ChevronRight, Globe, WifiOff, AlertTriangle
+    ChevronLeft, ChevronRight, Globe, WifiOff, AlertTriangle, DownloadCloud
 } from 'lucide-react';
 import { rbac, ROLES, ROLE_CONFIG } from '../services/rbac';
 
@@ -10,7 +10,8 @@ const Sidebar = ({ activeRole, onRoleChange, onAction, emergencyBanner, lang, on
 
     const items = [
         { id: 'home', icon: Home, label: 'Overview', show: true },
-        { id: 'shelter', icon: Navigation, label: 'Find Shelter & Evacuate', show: true, highlight: true },
+        { id: 'offline_map', icon: DownloadCloud, label: 'Offline Map & SOS Hub', show: true, highlight: true },
+        { id: 'shelter', icon: Navigation, label: 'Find Shelter & Evacuate', show: true },
         { id: 'report', icon: PlusCircle, label: activeRole === ROLES.FIELD_OFFICER ? 'Field Inspection Log' : 'Report Incident', show: true },
         { id: 'emergency', icon: ShieldAlert, label: 'Emergency Priority', show: true },
         { id: 'simulator', icon: CloudLightning, label: 'Disaster Simulator', show: rbac.hasPermission(activeRole, 'canSimulate') },

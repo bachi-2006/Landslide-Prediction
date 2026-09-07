@@ -28,7 +28,8 @@ import {
   Volume2,
   VolumeX,
   CheckCircle2,
-  Share2
+  Share2,
+  DownloadCloud
 } from 'lucide-react';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Geolocation } from '@capacitor/geolocation';
@@ -45,6 +46,7 @@ import ProfileModal from './components/ProfileModal';
 import EmergencyAlertBanner from './components/EmergencyAlertBanner';
 import EvacuationModal from './components/EvacuationModal';
 import OfficerIncidentModal from './components/OfficerIncidentModal';
+import OfflineSectorModal from './components/OfflineSectorModal';
 
 const defaultDistricts = [
   { id: 'IN-ML-01', name: 'East Khasi Hills', state: 'Meghalaya', risk: 'High', score: 78, color: 'high' },
@@ -67,6 +69,7 @@ function App() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showEvacuation, setShowEvacuation] = useState(false);
+  const [showOfflineSector, setShowOfflineSector] = useState(false);
   const [activeOfficerIncident, setActiveOfficerIncident] = useState(null);
   const [userRole, setUserRole] = useState(() => {
     return (typeof window !== 'undefined' && localStorage.getItem('neshield_user_role')) || 'citizen';
@@ -83,9 +86,21 @@ function App() {
   const [refreshingHome, setRefreshingHome] = useState(false);
   const [userLocationName, setUserLocationName] = useState('Shillong, Meghalaya');
 
-  // Network listeners
+  // Network listeners & auto-sync offline aid queue
   useEffect(() => {
-    const goOnline = () => setIsOnline(true);
+    const goOnline = () => {
+      setIsOnline(true);
+      // Auto-sync queued offline relief requests
+      const queued = JSON.parse(localStorage.getItem('neshield_offline_aid_queue') || '[]');
+      if (queued.length > 0) {
+        Promise.all(queued.map(req => mobileApi.submitReliefRequest(req).catch(() => null)))
+          .then(() => {
+            localStorage.removeItem('neshield_offline_aid_queue');
+            setReportToast({ success: true, message: `${queued.length} offline aid request(s) auto-synced!` });
+            setTimeout(() => setReportToast(null), 4000);
+          });
+      }
+    };
     const goOffline = () => setIsOnline(false);
     window.addEventListener('online', goOnline);
     window.addEventListener('offline', goOffline);
@@ -272,6 +287,18 @@ function App() {
           {!isOnline && <span className="offline-pill"><WifiOff size={13} /> Offline</span>}
           <button 
             className="icon-button" 
+            aria-label="Offline Locality Map & SOS Hub"
+            title="Download Locality Map & 3 Relief Centres"
+            onClick={() => {
+              soundEngine.playChime();
+              setShowOfflineSector(true);
+            }}
+            style={{ color: '#f59e0b' }}
+          >
+            <DownloadCloud size={19} />
+          </button>
+          <button 
+            className="icon-button" 
             aria-label="Notifications"
             onClick={() => {
               soundEngine.playChime();
@@ -422,6 +449,42 @@ function App() {
             </button>
           </section>
 
+          {/* Offline Sector Map & Aid Request Banner */}
+          <div 
+            onClick={() => {
+              soundEngine.playChime();
+              setShowOfflineSector(true);
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+              border: '1px solid rgba(245, 158, 11, 0.4)',
+              borderRadius: '16px',
+              padding: '12px 14px',
+              marginBottom: '16px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(0,0,0,0.25)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ background: '#f59e0b', color: '#0f172a', width: '36px', height: '36px', borderRadius: '10px', display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                <DownloadCloud size={20} />
+              </div>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <strong style={{ fontSize: '13px', color: '#ffffff' }}>Offline Locality Map & SOS</strong>
+                  <span style={{ fontSize: '9px', background: '#d97706', color: 'white', padding: '1px 5px', borderRadius: '4px', fontWeight: 'bold' }}>ZERO SIGNAL</span>
+                </div>
+                <p style={{ margin: '2px 0 0', fontSize: '11px', color: '#94a3b8' }}>
+                  Download locality · 3 Nearest Centers with paths · Food/Water SOS
+                </p>
+              </div>
+            </div>
+            <ChevronRight size={18} color="#94a3b8" />
+          </div>
+
           {/* Latest Verified Alerts */}
           <section className="section-block alerts-block">
             <div className="section-header">
@@ -531,6 +594,7 @@ function App() {
           roadCorridors={roadCorridors} 
           onRefresh={fetchLiveData} 
           onOpenEvacuation={() => setShowEvacuation(true)}
+          onOpenOfflineSector={() => setShowOfflineSector(true)}
         />
       )}
 
@@ -592,6 +656,13 @@ function App() {
         <EvacuationModal onClose={() => setShowEvacuation(false)} />
       )}
 
+      {showOfflineSector && (
+        <OfflineSectorModal 
+          isOpen={showOfflineSector} 
+          onClose={() => setShowOfflineSector(false)} 
+        />
+      )}
+
       {activeOfficerIncident && (
         <OfficerIncidentModal 
           incident={activeOfficerIncident}
@@ -633,7 +704,7 @@ function NavButton({ active, label, icon, onClick }) {
   );
 }
 
-function RoutesView({ roadCorridors = [], onRefresh, onOpenEvacuation }) {
+function RoutesView({ roadCorridors = [], onRefresh, onOpenEvacuation, onOpenOfflineSector }) {
   const [origin, setOrigin] = useState('Shillong, Meghalaya');
   const [destination, setDestination] = useState('Cherrapunji, Meghalaya');
 
@@ -663,6 +734,34 @@ function RoutesView({ roadCorridors = [], onRefresh, onOpenEvacuation }) {
           <RefreshCw size={18} />
         </button>
       </section>
+
+      {/* Offline Locality Map & 3 Nearest Relief Hubs Trigger */}
+      {onOpenOfflineSector && (
+        <button
+          type="button"
+          onClick={onOpenOfflineSector}
+          style={{
+            width: '100%',
+            background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+            color: '#f59e0b',
+            border: '1px solid rgba(245, 158, 11, 0.4)',
+            borderRadius: '12px',
+            padding: '12px 14px',
+            fontSize: '12px',
+            fontWeight: 'bold',
+            marginBottom: '10px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            boxShadow: '0 2px 6px rgba(0,0,0,0.3)'
+          }}
+        >
+          <DownloadCloud size={17} />
+          <span>Save Locality Offline & View 3 Nearest Relief Hubs →</span>
+        </button>
+      )}
 
       {/* Direct Shelter & Disaster Evacuation Modal Trigger */}
       {onOpenEvacuation && (
