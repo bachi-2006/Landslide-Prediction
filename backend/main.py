@@ -95,11 +95,11 @@ async def stop_background_monitoring():
     if scheduler.running:
         scheduler.shutdown()
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
     return {"message": "Welcome to NE-SHIELD API. Visit /docs for API documentation."}
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     return {
         "status": "ok",
