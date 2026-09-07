@@ -1,6 +1,10 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || (
+    typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+        ? '/api'
+        : 'https://ne-shield-api.onrender.com/api'
+);
 
 // Retrieve ephemeral runtime session token issued by /api/auth/login
 const getAuthToken = () => {
