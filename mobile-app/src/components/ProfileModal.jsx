@@ -1,21 +1,53 @@
 import React, { useState, useEffect } from 'react';
-import { UserRound, Phone, Shield, WifiOff, Check, X, Save, Globe } from 'lucide-react';
+import { UserRound, Phone, Shield, WifiOff, Check, X, Save, Globe, Key, AlertCircle } from 'lucide-react';
 import { soundEngine } from '../services/soundEngine';
+import { mobileApi } from '../services/api';
 
 export default function ProfileModal({ onClose, isOnline }) {
   const [name, setName] = useState(() => localStorage.getItem('ne_citizen_name') || 'Field Citizen');
   const [icePhone, setIcePhone] = useState(() => localStorage.getItem('ne_ice_phone') || '+91 98765 43210');
+  const [district, setDistrict] = useState(() => localStorage.getItem('ne_user_district') || 'East Khasi Hills');
   const [role, setRole] = useState(() => localStorage.getItem('neshield_user_role') || 'citizen');
+  const [password, setPassword] = useState('');
   const [apiHost, setApiHost] = useState(() => localStorage.getItem('neshield_api_host') || 'http://10.82.15.222:8000');
   const [saved, setSaved] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const handleSave = (e) => {
+  const handleSave = async (e) => {
     e.preventDefault();
-    localStorage.setItem('ne_citizen_name', name);
-    localStorage.setItem('ne_ice_phone', icePhone);
-    localStorage.setItem('ne_user_district', district);
+    setErrorMsg('');
+
+    // 1. Password Verification for RBAC
+    if (role === 'field_officer') {
+      if (password.trim() !== '9') {
+        setErrorMsg("Invalid Field Officer Password. Hint: Default is '9'");
+        return;
+      }
+    } else if (role === 'admin') {
+      if (password.trim() !== '99') {
+        setErrorMsg("Invalid Admin Password. Hint: Default is '99'");
+        return;
+      }
+    }
+
+    // 2. Register Citizen in Database
+    try {
+      await mobileApi.loginOrRegister({
+        role,
+        password: password.trim(),
+        name: name.trim(),
+        phone: icePhone.trim(),
+        district: district.trim()
+      });
+    } catch (apiErr) {
+      console.warn("Auth registration sync note:", apiErr);
+    }
+
+    localStorage.setItem('ne_citizen_name', name.trim());
+    localStorage.setItem('ne_ice_phone', icePhone.trim());
+    localStorage.setItem('ne_user_district', district.trim());
     localStorage.setItem('neshield_user_role', role);
-    localStorage.setItem('neshield_api_host', apiHost);
+    localStorage.setItem('neshield_api_host', apiHost.trim());
     soundEngine.playChime();
     setSaved(true);
     setTimeout(() => {
@@ -73,6 +105,26 @@ export default function ProfileModal({ onClose, isOnline }) {
           )}
         </div>
 
+        {/* Error Notification */}
+        {errorMsg && (
+          <div style={{
+            background: '#fef2f2',
+            border: '1px solid #fecaca',
+            color: '#b91c1c',
+            borderRadius: '12px',
+            padding: '10px 12px',
+            marginBottom: '14px',
+            fontSize: '11px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontWeight: '600'
+          }}>
+            <AlertCircle size={16} />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
         {/* Profile & ICE Form */}
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '18px' }}>
           {/* RBAC Role Selector */}
@@ -82,7 +134,10 @@ export default function ProfileModal({ onClose, isOnline }) {
             </label>
             <select
               value={role}
-              onChange={(e) => setRole(e.target.value)}
+              onChange={(e) => {
+                setRole(e.target.value);
+                setErrorMsg('');
+              }}
               style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '12px', background: 'white', fontWeight: 'bold' }}
             >
               <option value="citizen">👤 Citizen (Report & Evacuate)</option>
@@ -90,6 +145,55 @@ export default function ProfileModal({ onClose, isOnline }) {
               <option value="admin">🚨 Admin / SEOC Commander (Assign & Sirens)</option>
             </select>
           </div>
+
+          {/* Conditional Passcode Requirement for Officer & Admin */}
+          {role === 'field_officer' && (
+            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '12px', padding: '10px 12px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', fontWeight: 'bold', color: '#166534', marginBottom: '4px' }}>
+                <Key size={13} />
+                Field Officer Passcode (Required)
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter passcode: 9"
+                required
+                style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #86efac', fontSize: '12px', background: '#ffffff', boxSizing: 'border-box' }}
+              />
+              <small style={{ fontSize: '10px', color: '#15803d', marginTop: '4px', display: 'block' }}>
+                🔑 Default passcode for Field Officers is <strong>9</strong>
+              </small>
+            </div>
+          )}
+
+          {role === 'admin' && (
+            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px', padding: '10px 12px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', fontWeight: 'bold', color: '#991b1b', marginBottom: '4px' }}>
+                <Key size={13} />
+                SEOC Admin Passcode (Required)
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter passcode: 99"
+                required
+                style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #fca5a5', fontSize: '12px', background: '#ffffff', boxSizing: 'border-box' }}
+              />
+              <small style={{ fontSize: '10px', color: '#b91c1c', marginTop: '4px', display: 'block' }}>
+                🔑 Default passcode for SEOC Admins is <strong>99</strong>
+              </small>
+            </div>
+          )}
+
+          {role === 'citizen' && (
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '8px 10px' }}>
+              <small style={{ fontSize: '10px', color: '#64748b', display: 'block' }}>
+                ℹ️ Citizen mode requires no password. Your profile details will be saved to the database.
+              </small>
+            </div>
+          )}
 
           <div>
             <label style={{ display: 'block', fontSize: '11px', fontWeight: 'bold', color: '#334155', marginBottom: '4px' }}>

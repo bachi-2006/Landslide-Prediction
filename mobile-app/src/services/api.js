@@ -16,7 +16,8 @@ export const getApiBaseUrl = () => {
   return 'http://10.82.15.222:8000';
 };
 
-const BASE_URL = getApiBaseUrl();
+// Dynamic Base URL resolver that checks custom settings on each call
+const BASE_URL = { toString: () => getApiBaseUrl() };
 
 const getAuthHeader = (role = 'citizen') => {
   if (typeof window !== 'undefined' && window.localStorage) {
@@ -32,6 +33,16 @@ const getAuthHeader = (role = 'citizen') => {
 };
 
 export const mobileApi = {
+  // 0. Auth & Identity
+  async loginOrRegister(payload) {
+    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    return res.json();
+  },
+
   // 1. District Risks
   async getRisks() {
     const res = await fetch(`${BASE_URL}/api/risk`);

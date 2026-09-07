@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend")
 
-from backend.routers import risk, incidents, routes, alerts, devices
+from backend.routers import risk, incidents, routes, alerts, devices, auth
 
 load_dotenv()
 
@@ -46,6 +46,7 @@ app.add_middleware(
 )
 
 # Register Routers
+app.include_router(auth.router)
 app.include_router(risk.router)
 app.include_router(incidents.router)
 app.include_router(routes.router)

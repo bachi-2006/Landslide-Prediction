@@ -102,6 +102,13 @@ function App() {
     return unsub;
   }, []);
 
+  // Check if user has chosen persona/role; if not, open setup modal on launch
+  useEffect(() => {
+    if (typeof window !== 'undefined' && !localStorage.getItem('neshield_user_role')) {
+      setShowProfile(true);
+    }
+  }, []);
+
   // Fetch live backend data from database
   const fetchLiveData = async () => {
     try {
@@ -471,6 +478,22 @@ function App() {
             districts={districts}
             incidents={rawIncidents}
             onOpenReport={() => setShowReport(true)}
+            onSelectIncident={(inc) => setActiveOfficerIncident(inc)}
+            userRole={userRole}
+            onRespondIncident={async (inc) => {
+              const name = localStorage.getItem('ne_citizen_name') || 'Field Citizen';
+              try {
+                await mobileApi.respondIncident(inc.id, {
+                  responder_name: name,
+                  responder_role: userRole,
+                  action_taken: 'Responded via Mobile App Map'
+                });
+                soundEngine.playChime();
+                fetchLiveData();
+              } catch (e) {
+                console.warn("Respond incident err:", e);
+              }
+            }}
           />
         </div>
       )}
@@ -486,7 +509,27 @@ function App() {
 
       {/* 4. ALERTS, SIRENS & SAFETY TAB */}
       {activeTab === 'alerts' && (
-        <AlertsView alerts={alerts} onOpenReport={() => setShowReport(true)} />
+        <AlertsView 
+          alerts={alerts} 
+          rawIncidents={rawIncidents}
+          userRole={userRole}
+          onOpenReport={() => setShowReport(true)} 
+          onSelectIncident={(inc) => setActiveOfficerIncident(inc)}
+          onRespondIncident={async (inc) => {
+            const name = localStorage.getItem('ne_citizen_name') || 'Field Citizen';
+            try {
+              await mobileApi.respondIncident(inc.id, {
+                responder_name: name,
+                responder_role: userRole,
+                action_taken: 'Responded via Mobile Alerts Stream'
+              });
+              soundEngine.playChime();
+              fetchLiveData();
+            } catch (e) {
+              console.warn("Respond alert err:", e);
+            }
+          }}
+        />
       )}
 
       {/* Bottom Navigation Bar */}
@@ -700,7 +743,14 @@ function RoutesView({ roadCorridors = [], onRefresh, onOpenEvacuation }) {
   );
 }
 
-function AlertsView({ alerts = [], onOpenReport }) {
+function AlertsView({ 
+  alerts = [], 
+  rawIncidents = [], 
+  userRole = 'citizen', 
+  onOpenReport, 
+  onSelectIncident, 
+  onRespondIncident 
+}) {
   return (
     <div className="page-content">
       <section className="page-heading">
@@ -799,18 +849,82 @@ function AlertsView({ alerts = [], onOpenReport }) {
       </h4>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {alerts.map((alert) => (
-          <article className="alert-row" key={alert.id || alert.title}>
-            <span className={`alert-icon ${alert.color}`}>
-              {alert.color === 'red' ? <Siren size={17} /> : <FileWarning size={17} />}
-            </span>
-            <div>
-              <div className="alert-meta"><span>{alert.type}</span><time>{alert.time}</time></div>
-              <strong>{alert.title}</strong>
-              <p>{alert.text}</p>
-            </div>
-          </article>
-        ))}
+        {alerts.map((alert) => {
+          const matchedInc = rawIncidents.find(i => i.id === alert.id) || {
+            id: alert.id || 'inc-01',
+            title: alert.title,
+            description: alert.text,
+            status: 'open',
+            latitude: alert.latitude || 25.5788,
+            longitude: alert.longitude || 91.8933,
+            people_responded: 1,
+          };
+          return (
+            <article 
+              className="alert-row" 
+              key={alert.id || alert.title}
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                <span className={`alert-icon ${alert.color}`}>
+                  {alert.color === 'red' ? <Siren size={17} /> : <FileWarning size={17} />}
+                </span>
+                <div style={{ flex: 1 }}>
+                  <div className="alert-meta"><span>{alert.type}</span><time>{alert.time}</time></div>
+                  <strong>{alert.title}</strong>
+                  <p>{alert.text}</p>
+                </div>
+              </div>
+
+              {/* Action and Responder bar */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid #f1f5f9', paddingTop: '8px', marginTop: '6px' }}>
+                <span style={{ fontSize: '10px', color: '#0284c7', fontWeight: 'bold' }}>
+                  👥 {matchedInc.people_responded || 0} Responded
+                </span>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onRespondIncident) onRespondIncident(matchedInc);
+                    }}
+                    style={{
+                      background: '#0284c7',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '5px 8px',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    👥 Respond
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onSelectIncident) onSelectIncident(matchedInc);
+                    }}
+                    style={{
+                      background: '#0f5c5d',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '5px 8px',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {userRole === 'field_officer' || userRole === 'admin' ? '🛡️ Triage / Resolve' : 'Details'}
+                  </button>
+                </div>
+              </div>
+            </article>
+          );
+        })}
       </div>
     </div>
   );

@@ -61,7 +61,7 @@ const STORAGE_KEY = 'ne_shield_active_role';
 
 export const rbac = {
     getCurrentRole: () => {
-        return localStorage.getItem(STORAGE_KEY) || ROLES.ADMIN;
+        return localStorage.getItem(STORAGE_KEY) || ROLES.CITIZEN;
     },
     setRole: (role) => {
         if (ROLE_CONFIG[role]) {

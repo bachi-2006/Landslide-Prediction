@@ -4,13 +4,13 @@ import { incidentService } from '../services/api';
 import { saveOfflineIncident } from '../services/offlineSync';
 import { getTranslation } from '../services/i18n';
 
-const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted }) => {
+const IncidentForm = ({ onClose, lang = 'en', onReportSubmitted, activeRole = 'citizen' }) => {
     const t = (key) => getTranslation(lang, key);
 
     const [formData, setFormData] = useState({
         description: '',
-        submitted_by: '',
-        reporter_role: 'citizen',
+        submitted_by: typeof window !== 'undefined' ? (localStorage.getItem('ne_citizen_name') || '') : '',
+        reporter_role: activeRole || 'citizen',
         severity: 'Moderate',
         latitude: null,
         longitude: null,

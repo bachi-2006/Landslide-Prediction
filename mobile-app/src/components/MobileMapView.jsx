@@ -95,7 +95,10 @@ export default function MobileMapView({
   onSelectDistrict, 
   districts = [], 
   incidents = [],
-  onOpenReport
+  onOpenReport,
+  onSelectIncident,
+  userRole = 'citizen',
+  onRespondIncident
 }) {
   const [geoJsonData, setGeoJsonData] = useState(null);
   const [activeBasemap, setActiveBasemap] = useState('standard');
@@ -255,6 +258,63 @@ export default function MobileMapView({
                 {inc.photo_url && (
                   <img src={inc.photo_url} alt="Evidence" style={{ width: '100%', height: '80px', objectFit: 'cover', borderRadius: '8px', marginBottom: '6px' }} />
                 )}
+
+                {/* Responders Count */}
+                <div style={{ margin: '6px 0 6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '6px' }}>
+                  <span style={{ fontSize: '10px', color: '#0369a1', fontWeight: 'bold' }}>
+                    👥 {inc.people_responded || 0} Responded
+                  </span>
+                  {inc.status && (
+                    <span style={{ fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase', color: inc.status === 'resolved' ? '#16a34a' : '#b45309' }}>
+                      {inc.status}
+                    </span>
+                  )}
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onRespondIncident) onRespondIncident(inc);
+                    }}
+                    style={{
+                      flex: 1,
+                      background: '#0284c7',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '6px 8px',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    👥 I Am Responding
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onSelectIncident) onSelectIncident(inc);
+                    }}
+                    style={{
+                      background: '#0f5c5d',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '6px 8px',
+                      fontSize: '10px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {userRole === 'field_officer' || userRole === 'admin' ? '🛡️ Triage' : 'ℹ️ Details'}
+                  </button>
+                </div>
+
                 <div style={{ fontSize: '9px', color: '#16a34a', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between' }}>
                   <span>✓ Live Synced to HQ</span>
                   <span>{Number(inc.latitude).toFixed(4)}°, {Number(inc.longitude).toFixed(4)}°</span>

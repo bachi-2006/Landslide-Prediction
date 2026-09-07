@@ -41,16 +41,27 @@ const Sidebar = ({ activeRole, onRoleChange, onAction, emergencyBanner, lang, on
 
             {!collapsed && (
                 <div className="p-3 border-b border-slate-800 bg-slate-950/40">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Active Persona Role</label>
-                    <select
-                        value={activeRole}
-                        onChange={(e) => onRoleChange(e.target.value)}
-                        className="w-full bg-slate-800 text-xs font-semibold text-white rounded-lg p-2 border border-slate-700 outline-none cursor-pointer hover:border-slate-600 transition-colors"
+                    <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                            Current Persona
+                        </label>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            activeRole === ROLES.ADMIN 
+                                ? 'bg-purple-900/60 text-purple-300 border-purple-500/40' 
+                                : activeRole === ROLES.FIELD_OFFICER 
+                                ? 'bg-blue-900/60 text-blue-300 border-blue-500/40' 
+                                : 'bg-emerald-900/60 text-emerald-300 border-emerald-500/40'
+                        }`}>
+                            {activeRole === ROLES.ADMIN ? '🚨 Admin' : activeRole === ROLES.FIELD_OFFICER ? '🛡️ Officer' : '👤 Citizen'}
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => onAction('switch_role')}
+                        className="w-full bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white rounded-lg py-2 px-3 border border-slate-700 transition flex items-center justify-center gap-1.5 shadow-sm"
                     >
-                        <option value={ROLES.CITIZEN}>Citizen (Community)</option>
-                        <option value={ROLES.FIELD_OFFICER}>Field Officer (SDRF)</option>
-                        <option value={ROLES.ADMIN}>Admin (Disaster HQ)</option>
-                    </select>
+                        <span>Switch Persona / Log In</span>
+                    </button>
                 </div>
             )}
 

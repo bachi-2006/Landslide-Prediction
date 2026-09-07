@@ -8,6 +8,7 @@ import DisasterSimulator from './components/DisasterSimulator';
 import AlertsEngine from './components/AlertsEngine';
 import LocationEvacuationModal from './components/LocationEvacuationModal';
 import Sidebar from './components/Sidebar';
+import RoleAuthModal from './components/RoleAuthModal';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { requestNotificationPermission, onNotificationReceived } from './services/firebase';
 import { languages, getTranslation } from './services/i18n';
@@ -23,6 +24,7 @@ const App = () => {
     const [showSimulator, setShowSimulator] = useState(false);
     const [showAlertsEngine, setShowAlertsEngine] = useState(false);
     const [showEvacuationModal, setShowEvacuationModal] = useState(false);
+    const [showRoleModal, setShowRoleModal] = useState(() => !localStorage.getItem('ne_shield_active_role'));
     const [activeRole, setActiveRole] = useState(() => rbac.getCurrentRole());
     const [emergencyBanner, setEmergencyBanner] = useState(null);
 
@@ -118,7 +120,12 @@ const App = () => {
     if (currentView === 'landing') {
         return (
             <LandingPage 
-                onLaunchDashboard={() => setCurrentView('command_center')}
+                onLaunchDashboard={() => {
+                    setCurrentView('command_center');
+                    if (!localStorage.getItem('ne_shield_active_role')) {
+                        setShowRoleModal(true);
+                    }
+                }}
                 lang={lang}
             />
         );
@@ -176,6 +183,7 @@ const App = () => {
                         if (action === 'emergency') setShowEmergencyDashboard(true);
                         if (action === 'simulator') setShowSimulator(true);
                         if (action === 'alerts') setShowAlertsEngine(true);
+                        if (action === 'switch_role') setShowRoleModal(true);
                     }}
                 />
 
@@ -186,6 +194,7 @@ const App = () => {
                         route={route}
                         refreshKey={riskRefreshKey}
                         onDataLoaded={setMapData}
+                        activeRole={activeRole}
                     />
                 </div>
             </div>
@@ -206,6 +215,7 @@ const App = () => {
             {showIncidentForm && (
                 <IncidentForm
                     lang={lang}
+                    activeRole={activeRole}
                     onClose={() => setShowIncidentForm(false)}
                     onReportSubmitted={() => setRiskRefreshKey(k => k + 1)}
                 />
@@ -251,6 +261,17 @@ const App = () => {
                     setRoute(evacRoute);
                     setSyncToast(`Safe evacuation route plotted to ${shelter?.name || 'Safe Shelter'}!`);
                     setTimeout(() => setSyncToast(null), 5000);
+                }}
+            />
+
+            {/* RBAC Role & Identity Selector Modal */}
+            <RoleAuthModal
+                isOpen={showRoleModal}
+                onClose={() => setShowRoleModal(false)}
+                onAuthSuccess={(profile) => {
+                    setActiveRole(profile.role);
+                    setSyncToast(`Authenticated as ${profile.role}: ${profile.name}`);
+                    setRiskRefreshKey(k => k + 1);
                 }}
             />
         </div>

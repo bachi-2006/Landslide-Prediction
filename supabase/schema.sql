@@ -34,6 +34,15 @@ create index if not exists idx_historical_landslides_coords
 create index if not exists idx_incidents_created_at
     on public.incidents (created_at desc);
 
+create table if not exists public.users (
+    id uuid primary key default uuid_generate_v4(),
+    name text not null,
+    phone text,
+    district text,
+    role text default 'citizen',
+    created_at timestamptz not null default now()
+);
+
 create table if not exists public.incidents (
     id uuid primary key default uuid_generate_v4(),
     submitted_by text,

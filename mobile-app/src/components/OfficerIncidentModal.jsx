@@ -222,8 +222,8 @@ export default function OfficerIncidentModal({ incident, userRole = 'field_offic
           </div>
         )}
 
-        {/* Action 1: Assign Field Officer (Admin or Officer) */}
-        {!isResolved && (
+        {/* Action 1: Assign Field Officer (Admin or Officer only) */}
+        {!isResolved && (userRole === 'field_officer' || userRole === 'admin') ? (
           <form onSubmit={handleAssign} style={{
             background: 'white',
             border: '1px solid #e2e8f0',
@@ -277,10 +277,10 @@ export default function OfficerIncidentModal({ incident, userRole = 'field_offic
               Dispatch & Assign Team
             </button>
           </form>
-        )}
+        ) : null}
 
-        {/* Action 2: Resolve & Close Hazard Incident */}
-        {!isResolved && (
+        {/* Action 2: Resolve & Close Hazard Incident (Field Officer or Admin only) */}
+        {!isResolved && (userRole === 'field_officer' || userRole === 'admin') ? (
           <form onSubmit={handleResolve} style={{
             background: 'white',
             border: '1px solid #e2e8f0',
@@ -297,10 +297,10 @@ export default function OfficerIncidentModal({ incident, userRole = 'field_offic
                   Individuals Evacuated to Safety:
                 </label>
                 <input 
-                  type="number"
-                  value={peopleEvacuated}
-                  onChange={(e) => setPeopleEvacuated(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '12px' }}
+                  type="number" 
+                  value={peopleEvacuated} 
+                  onChange={(e) => setPeopleEvacuated(e.target.value)} 
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '12px' }} 
                 />
               </div>
               <div>
@@ -308,16 +308,16 @@ export default function OfficerIncidentModal({ incident, userRole = 'field_offic
                   Resolution Notes & Remediation:
                 </label>
                 <textarea 
-                  rows={2}
-                  value={resolutionNotes}
-                  onChange={(e) => setResolutionNotes(e.target.value)}
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '12px' }}
+                  rows={2} 
+                  value={resolutionNotes} 
+                  onChange={(e) => setResolutionNotes(e.target.value)} 
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '12px' }} 
                 />
               </div>
             </div>
-            <button
-              type="submit"
-              disabled={submitting}
+            <button 
+              type="submit" 
+              disabled={submitting} 
               style={{
                 width: '100%',
                 background: '#16a34a',
@@ -338,7 +338,20 @@ export default function OfficerIncidentModal({ incident, userRole = 'field_offic
               <span>Verify & Mark Resolved</span>
             </button>
           </form>
-        )}
+        ) : !isResolved && userRole === 'citizen' ? (
+          <div style={{
+            background: '#f8fafc',
+            border: '1px dashed #cbd5e1',
+            borderRadius: '14px',
+            padding: '14px',
+            marginBottom: '14px',
+            textAlign: 'center'
+          }}>
+            <p style={{ margin: 0, fontSize: '11px', color: '#64748b', fontWeight: '600' }}>
+              🛡️ Incident logged into State Emergency Operations Center (SEOC). SDRF and Field Officers are assigned for clearance and barricading.
+            </p>
+          </div>
+        ) : null}
       </section>
     </div>
   );
