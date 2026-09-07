@@ -32,17 +32,23 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS: restrict origins via environment in production.
-# Comma-separated list, e.g. CORS_ORIGINS=http://localhost:5173,https://app.example.com
-cors_origins = os.getenv("CORS_ORIGINS", "*")
-origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
-
+# CORS: Allow all origins, explicitly including Firebase web app, mobile, and wildcard
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=origins != ["*"],
+    allow_origins=[
+        "*",
+        "https://ne-shield.web.app",
+        "https://ne-shield.firebaseapp.com",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+    ],
+    allow_origin_regex=r".*",
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Register Routers

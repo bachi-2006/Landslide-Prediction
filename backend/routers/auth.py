@@ -69,8 +69,10 @@ async def login_or_register(req: AuthRequest):
     """
     requested_role = req.role.strip().lower()
 
+    user_pass = str(req.password or "").strip()
+
     if requested_role == "admin":
-        if req.password != "99":
+        if user_pass != "99":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid Admin Password. Access Denied."
@@ -91,7 +93,7 @@ async def login_or_register(req: AuthRequest):
         }
 
     elif requested_role in ["field_officer", "officer", "sdrf"]:
-        if req.password != "9":
+        if user_pass != "9":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid Field Officer Password. Access Denied."

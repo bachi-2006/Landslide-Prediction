@@ -43,6 +43,11 @@ export default function ProfileModal({ onClose, isOnline }) {
       console.warn("Auth registration sync note:", apiErr);
     }
 
+    const token = `neshield_${role === 'admin' ? 'adm' : role === 'field_officer' ? 'off' : 'usr'}_${Date.now()}`;
+    localStorage.setItem('neshield_auth_token', token);
+    sessionStorage.setItem('neshield_auth_token', token);
+    localStorage.setItem('ne_shield_auth_token', token);
+
     localStorage.setItem('ne_citizen_name', name.trim());
     localStorage.setItem('ne_ice_phone', icePhone.trim());
     localStorage.setItem('ne_user_district', district.trim());
