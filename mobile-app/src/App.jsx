@@ -190,21 +190,48 @@ function App() {
         if (!selectedDistrict) setSelectedDistrict(mapped[0]);
       }
 
-      // 2. Live crowd-sourced field incidents
-      const incRes = await mobileApi.getIncidents();
+      // 2. Live crowd-sourced field incidents & official broadcast alerts
+      const [incRes, alertRes] = await Promise.all([
+        mobileApi.getIncidents().catch(() => ({ data: [] })),
+        mobileApi.getBroadcastAlerts().catch(() => ({ data: [] }))
+      ]);
+
+      const mergedAlerts = [];
+
+      // Add official government broadcast alerts first
+      if (alertRes?.data && alertRes.data.length > 0) {
+        alertRes.data.forEach(al => {
+          mergedAlerts.push({
+            id: al.id || `alert-${Date.now()}`,
+            type: `🚨 ${al.level || 'CRITICAL'} BROADCAST`,
+            title: `SEOC Warning: ${al.district_id || 'Regional'}`,
+            text: al.message,
+            time: al.sent_at ? new Date(al.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live',
+            color: 'red',
+            isBroadcast: true
+          });
+        });
+      }
+
+      // Add crowd-sourced and verified field incidents
       if (incRes.data && incRes.data.length > 0) {
         setRawIncidents(incRes.data);
-        const mappedIncidents = incRes.data.map((inc, i) => ({
-          id: inc.id || String(i),
-          type: 'Citizen Hazard',
-          title: (inc.description || 'Hazard Alert').slice(0, 32),
-          text: `${inc.description || 'Hazard reported'} · ${inc.submitted_by || 'Field Reporter'}`,
-          time: inc.created_at ? new Date(inc.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live',
-          color: 'red',
-          latitude: inc.latitude,
-          longitude: inc.longitude
-        }));
-        setAlerts(mappedIncidents);
+        incRes.data.forEach((inc, i) => {
+          mergedAlerts.push({
+            id: inc.id || String(i),
+            type: inc.verification_status === 'verified' ? 'Verified Hazard' : 'Citizen Hazard',
+            title: (inc.description || 'Hazard Alert').slice(0, 36),
+            text: `${inc.description || 'Hazard reported'} · ${inc.submitted_by || 'Field Reporter'}`,
+            time: inc.created_at ? new Date(inc.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live',
+            color: inc.severity === 'Critical' || inc.severity === 'High' ? 'red' : 'amber',
+            latitude: inc.latitude,
+            longitude: inc.longitude
+          });
+        });
+      }
+
+      if (mergedAlerts.length > 0) {
+        setAlerts(mergedAlerts);
       }
 
       // 3. Live road status corridors
@@ -774,6 +801,8 @@ function App() {
           alerts={alerts} 
           rawIncidents={rawIncidents}
           userRole={userRole}
+          sirenSounding={sirenSounding}
+          onToggleSiren={handleSirenToggle}
           onOpenReport={() => setShowReport(true)} 
           onSelectIncident={(inc) => setActiveOfficerIncident(inc)}
           onRespondIncident={async (inc) => {
@@ -1043,6 +1072,8 @@ function AlertsView({
   alerts = [], 
   rawIncidents = [], 
   userRole = 'citizen', 
+  sirenSounding = false,
+  onToggleSiren,
   onOpenReport, 
   onSelectIncident, 
   onRespondIncident 
@@ -1143,14 +1174,14 @@ function AlertsView({
         </div>
         {sirenSounding ? (
           <button
-            onClick={() => handleSirenToggle(false)}
+            onClick={() => onToggleSiren ? onToggleSiren(false) : soundEngine.stopSiren()}
             style={{ background: '#0f172a', color: 'white', border: 'none', borderRadius: '12px', padding: '10px 14px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >
             ⏹️ Silence Siren
           </button>
         ) : (
           <button
-            onClick={() => handleSirenToggle(true)}
+            onClick={() => onToggleSiren ? onToggleSiren(true) : soundEngine.playSiren(6)}
             style={{ background: '#dc2626', color: 'white', border: 'none', borderRadius: '12px', padding: '10px 14px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >
             🚨 Sound Siren

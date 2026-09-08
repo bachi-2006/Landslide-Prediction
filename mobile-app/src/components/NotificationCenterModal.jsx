@@ -40,7 +40,7 @@ export default function NotificationCenterModal({ onClose }) {
 
     // Also notify backend hardware endpoint
     try {
-      await mobileApi.triggerHardware('Critical', 'IN-ML-01');
+      await mobileApi.triggerHardware(true, 'Critical', 'IN-ML-01');
     } catch (e) {
       console.warn("Hardware alert fallback:", e);
     } finally {

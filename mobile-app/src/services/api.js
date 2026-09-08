@@ -632,5 +632,18 @@ export const mobileApi = {
       if (res.ok) return await res.json();
     } catch (e) {}
     return { success: true };
+  },
+
+  // 8. Live Broadcast Alerts from Supabase / Backend
+  async getBroadcastAlerts() {
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.from('alerts').select('*').order('sent_at', { ascending: false }).limit(20);
+        if (!error && data && data.length > 0) {
+          return { success: true, data };
+        }
+      } catch (e) {}
+    }
+    return { success: true, data: [] };
   }
 };
