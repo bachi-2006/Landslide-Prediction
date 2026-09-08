@@ -290,4 +290,7 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_publication_rel rel JOIN pg_class c ON c.oid = rel.prrelid JOIN pg_publication p ON p.oid = rel.prpubid WHERE p.pubname = 'supabase_realtime' AND c.relname = 'beacon_sos_logs') THEN
         ALTER PUBLICATION supabase_realtime ADD TABLE public.beacon_sos_logs;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_publication_rel rel JOIN pg_class c ON c.oid = rel.prrelid JOIN pg_publication p ON p.oid = rel.prpubid WHERE p.pubname = 'supabase_realtime' AND c.relname = 'users') THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.users;
+    END IF;
 END $$;
