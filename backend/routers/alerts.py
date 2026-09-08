@@ -5,6 +5,8 @@ Handles triggering and recording system alerts.
 
 import os
 import hmac
+import asyncio
+import time
 from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel
 from typing import Optional, List
@@ -33,9 +35,17 @@ async def broadcast_alert(req: BroadcastAlertRequest, authorization: Optional[st
     Requires authority authorization token or verified Admin session.
     """
     expected_token = os.getenv("AUTHORITY_BROADCAST_KEY", "ne-shield-authority-key-2026")
-    token_candidate = authorization.replace("Bearer ", "").strip() if authorization else ""
-    is_valid_broadcast_key = bool(token_candidate and hmac.compare_digest(token_candidate, expected_token))
-    is_admin_session = bool(token_candidate and verify_session(token_candidate, required_role="admin"))
+    is_valid_broadcast_key = False
+    if authorization:
+        token = authorization.replace("Bearer ", "").strip()
+        is_valid_broadcast_key = hmac.compare_digest(token, expected_token)
+
+    # Also accept verified Admin session token
+    is_admin_session = False
+    if not is_valid_broadcast_key and authorization:
+        raw_token = authorization.replace("Bearer ", "").strip()
+        session = verify_session(raw_token, required_role="admin")
+        is_admin_session = session is not None
 
     if not (is_valid_broadcast_key or is_admin_session):
         raise HTTPException(
@@ -48,10 +58,14 @@ async def broadcast_alert(req: BroadcastAlertRequest, authorization: Optional[st
 
         # 1. Push notifications
         if "push" in req.channels:
-            response = db.table("fcm_tokens").select("token").eq("district_id", req.district_id).execute()
+            response = await asyncio.to_thread(
+                lambda: db.table("fcm_tokens").select("token").eq("district_id", req.district_id).execute()
+            )
             tokens = [row["token"] for row in response.data] if response.data else []
             if not tokens:
-                all_tokens = db.table("fcm_tokens").select("token").execute()
+                all_tokens = await asyncio.to_thread(
+                    lambda: db.table("fcm_tokens").select("token").execute()
+                )
                 tokens = [row["token"] for row in all_tokens.data] if all_tokens.data else []
 
             extra_payload = {
@@ -78,11 +92,13 @@ async def broadcast_alert(req: BroadcastAlertRequest, authorization: Optional[st
             results["sms"] = sms_res
 
         # 3. Log alert to DB
-        db.table("alerts").insert({
-            "district_id": req.district_id,
-            "level": req.level,
-            "message": req.message,
-        }).execute()
+        await asyncio.to_thread(
+            lambda: db.table("alerts").insert({
+                "district_id": req.district_id,
+                "level": req.level,
+                "message": req.message,
+            }).execute()
+        )
 
         return {"success": True, "data": results, "error": None}
 
@@ -99,13 +115,17 @@ async def test_alert(req: AlertTestRequest):
     try:
         # 1. Fetch tokens for this district
         db = get_supabase()
-        response = db.table("fcm_tokens").select("token").eq("district_id", req.district_id).execute()
-        tokens = [row["token"] for row in response.data]
+        response = await asyncio.to_thread(
+            lambda: db.table("fcm_tokens").select("token").eq("district_id", req.district_id).execute()
+        )
+        tokens = [row["token"] for row in response.data] if response.data else []
 
         if not tokens:
             # Fallback: send to all tokens for demo purposes if district specific not found
-            response = db.table("fcm_tokens").select("token").execute()
-            tokens = [row["token"] for row in response.data]
+            response = await asyncio.to_thread(
+                lambda: db.table("fcm_tokens").select("token").execute()
+            )
+            tokens = [row["token"] for row in response.data] if response.data else []
 
         # 2. Send Push
         if tokens:
@@ -118,11 +138,13 @@ async def test_alert(req: AlertTestRequest):
             sent = False
 
         # 3. Log alert to DB
-        db.table("alerts").insert({
-            "district_id": req.district_id,
-            "level": req.level,
-            "message": req.message,
-        }).execute()
+        await asyncio.to_thread(
+            lambda: db.table("alerts").insert({
+                "district_id": req.district_id,
+                "level": req.level,
+                "message": req.message,
+            }).execute()
+        )
 
         return {"success": sent, "data": {"tokens_notified": len(tokens)}, "error": None}
 
@@ -133,29 +155,41 @@ async def test_alert(req: AlertTestRequest):
 
 current_alert_state = {"is_active": False, "message": ""}
 
-def _latest_incident_status():
-    """Return the newest incident for hardware nodes without breaking alert polling."""
-    try:
-        db = get_supabase()
-        response = db.table("incidents").select(
-            "id,description,created_at,submitted_by"
-        ).order("created_at", desc=True).limit(1).execute()
-        latest = (response.data or [None])[0]
-        return {
-            "database_connected": True,
-            "latest_incident_id": latest.get("id") if latest else None,
-            "latest_incident_message": latest.get("description", "") if latest else "",
-            "latest_incident_created_at": latest.get("created_at") if latest else None,
-            "latest_incident_reporter": latest.get("submitted_by", "") if latest else ""
-        }
-    except Exception:
-        return {
-            "database_connected": False,
-            "latest_incident_id": None,
-            "latest_incident_message": "",
-            "latest_incident_created_at": None,
-            "latest_incident_reporter": ""
-        }
+_latest_incident_cache = {"data": None, "timestamp": 0.0}
+
+async def _latest_incident_status_async():
+    """Return the newest incident for hardware nodes with 5s in-memory TTL to prevent event-loop choking during frequent polling."""
+    now = time.time()
+    if _latest_incident_cache["data"] and (now - _latest_incident_cache["timestamp"]) < 5.0:
+        return _latest_incident_cache["data"]
+
+    def _query():
+        try:
+            db = get_supabase()
+            response = db.table("incidents").select(
+                "id,description,created_at,submitted_by"
+            ).order("created_at", desc=True).limit(1).execute()
+            latest = (response.data or [None])[0]
+            return {
+                "database_connected": True,
+                "latest_incident_id": latest.get("id") if latest else None,
+                "latest_incident_message": latest.get("description", "") if latest else "",
+                "latest_incident_created_at": latest.get("created_at") if latest else None,
+                "latest_incident_reporter": latest.get("submitted_by", "") if latest else ""
+            }
+        except Exception:
+            return {
+                "database_connected": False,
+                "latest_incident_id": None,
+                "latest_incident_message": "",
+                "latest_incident_created_at": None,
+                "latest_incident_reporter": ""
+            }
+
+    data = await asyncio.to_thread(_query)
+    _latest_incident_cache["data"] = data
+    _latest_incident_cache["timestamp"] = now
+    return data
 
 class HardwareTriggerRequest(BaseModel):
     active: Optional[bool] = None
@@ -189,10 +223,11 @@ async def trigger_hardware_siren(req: HardwareTriggerRequest, authorization: Opt
 @router.get("/hardware/status")
 async def get_hardware_status():
     """The ESP32 constantly polls this endpoint."""
+    inc_status = await _latest_incident_status_async()
     return {
         **current_alert_state,
         "web_access": True,
-        **_latest_incident_status()
+        **inc_status
     }
 
 
@@ -220,22 +255,24 @@ async def beacon_heartbeat(req: BeaconHeartbeatRequest):
     """ESP32 sends periodic status updates so admin dashboard can monitor beacon."""
     try:
         db = get_supabase()
-        db.table("hardware_beacons").upsert({
-            "beacon_id": req.beacon_id,
-            "name": req.name,
-            "location_name": req.location_name,
-            "latitude": req.latitude,
-            "longitude": req.longitude,
-            "status": "alert" if req.siren_active else "online",
-            "siren_active": req.siren_active,
-            "wifi_ssid": req.wifi_ssid,
-            "sta_ip": req.sta_ip,
-            "db_connected": req.db_connected,
-            "clients_connected": req.clients_connected,
-            "last_incident_seen": req.last_incident_seen,
-            "battery_level": req.battery_level,
-            "last_heartbeat": "now()"
-        }).execute()
+        await asyncio.to_thread(
+            lambda: db.table("hardware_beacons").upsert({
+                "beacon_id": req.beacon_id,
+                "name": req.name,
+                "location_name": req.location_name,
+                "latitude": req.latitude,
+                "longitude": req.longitude,
+                "status": "alert" if req.siren_active else "online",
+                "siren_active": req.siren_active,
+                "wifi_ssid": req.wifi_ssid,
+                "sta_ip": req.sta_ip,
+                "db_connected": req.db_connected,
+                "clients_connected": req.clients_connected,
+                "last_incident_seen": req.last_incident_seen,
+                "battery_level": req.battery_level,
+                "last_heartbeat": "now()"
+            }).execute()
+        )
         return {"success": True, "beacon_id": req.beacon_id}
     except Exception as e:
         return {"success": True, "beacon_id": req.beacon_id, "cached": True, "note": str(e)}
@@ -288,48 +325,51 @@ async def register_beacon_sos(req: BeaconSosRequest):
     # 2. Persist to Supabase
     try:
         db = get_supabase()
-        db.table("beacon_sos_logs").insert({
-            "beacon_id": req.beacon_id,
-            "citizen_name": req.citizen_name,
-            "phone": req.phone,
-            "people_count": req.people_count or 1,
-            "medical_needs": req.medical_needs or "None",
-            "notes": req.notes,
-            "ip_address": req.ip_address,
-            "synced_to_cloud": True
-        }).execute()
+        def _persist_sos():
+            db.table("beacon_sos_logs").insert({
+                "beacon_id": req.beacon_id,
+                "citizen_name": req.citizen_name,
+                "phone": req.phone,
+                "people_count": req.people_count or 1,
+                "medical_needs": req.medical_needs or "None",
+                "notes": req.notes,
+                "ip_address": req.ip_address,
+                "synced_to_cloud": True
+            }).execute()
 
-        db.table("relief_requests").insert({
-            "id": sos_id,
-            "user_name": req.citizen_name,
-            "phone": req.phone,
-            "locality_name": f"ESP32 Wi-Fi Node ({req.beacon_id})",
-            "lat": 25.5788,
-            "lon": 91.8933,
-            "aid_type": "medical" if (req.medical_needs and req.medical_needs.lower() != "none") else "food",
-            "people_count": req.people_count or 1,
-            "urgency": "Critical" if (req.medical_needs and req.medical_needs.lower() != "none") else "High",
-            "status": "pending",
-            "source": "esp32_captive_portal",
-            "beacon_id": req.beacon_id,
-            "notes": f"Medical: {req.medical_needs}. Notes: {req.notes or 'None'}"
-        }).execute()
+            db.table("relief_requests").insert({
+                "id": sos_id,
+                "user_name": req.citizen_name,
+                "phone": req.phone,
+                "locality_name": f"ESP32 Wi-Fi Node ({req.beacon_id})",
+                "lat": 25.5788,
+                "lon": 91.8933,
+                "aid_type": "medical" if (req.medical_needs and req.medical_needs.lower() != "none") else "food",
+                "people_count": req.people_count or 1,
+                "urgency": "Critical" if (req.medical_needs and req.medical_needs.lower() != "none") else "High",
+                "status": "pending",
+                "source": "esp32_captive_portal",
+                "beacon_id": req.beacon_id,
+                "notes": f"Medical: {req.medical_needs}. Notes: {req.notes or 'None'}"
+            }).execute()
 
-        # Also persist directly into incidents table for immediate display on Dashboard, GIS Map, & Mobile App
-        db.table("incidents").insert({
-            "id": f"inc-{sos_id.lower()}",
-            "submitted_by": f"{req.citizen_name} (ESP32 Node {req.beacon_id})",
-            "description": f"Beacon SOS: {req.notes or 'Stranded victims registered at offline beacon'}. Condition: {req.medical_needs}. People: {req.people_count or 1}",
-            "latitude": 25.5788,
-            "longitude": 91.8933,
-            "severity": "Critical" if (req.medical_needs and req.medical_needs.lower() not in ["none", "safe"]) else "High",
-            "status": "open",
-            "reporter_role": "citizen",
-            "verification_status": "beacon_reported",
-            "people_responded": 0,
-            "people_evacuated": 0,
-            "created_at": now_iso
-        }).execute()
+            # Also persist directly into incidents table for immediate display on Dashboard, GIS Map, & Mobile App
+            db.table("incidents").insert({
+                "id": f"inc-{sos_id.lower()}",
+                "submitted_by": f"{req.citizen_name} (ESP32 Node {req.beacon_id})",
+                "description": f"Beacon SOS: {req.notes or 'Stranded victims registered at offline beacon'}. Condition: {req.medical_needs}. People: {req.people_count or 1}",
+                "latitude": 25.5788,
+                "longitude": 91.8933,
+                "severity": "Critical" if (req.medical_needs and req.medical_needs.lower() not in ["none", "safe"]) else "High",
+                "status": "open",
+                "reporter_role": "citizen",
+                "verification_status": "beacon_reported",
+                "people_responded": 0,
+                "people_evacuated": 0,
+                "created_at": now_iso
+            }).execute()
+
+        await asyncio.to_thread(_persist_sos)
         saved_db = True
     except Exception as e:
         pass
@@ -371,7 +411,7 @@ async def get_beacon_logs(beacon_id: Optional[str] = None):
         query = db.table("beacon_sos_logs").select("*").order("created_at", desc=True).limit(50)
         if beacon_id:
             query = query.eq("beacon_id", beacon_id)
-        res = query.execute()
+        res = await asyncio.to_thread(lambda: query.execute())
         db_logs = res.data or []
     except Exception as e:
         pass

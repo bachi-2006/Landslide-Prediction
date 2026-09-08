@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from backend.db.supabase_client import SupabaseNotConfiguredError, get_supabase
 from backend.services.auth import require_officer, require_admin, verify_session, _extract_token
+import asyncio
 import uuid
 import logging
 
@@ -58,7 +59,9 @@ IN_MEMORY_INCIDENTS = [
 async def get_incidents():
     """Returns all submitted incidents from Supabase, merged with seed fallback."""
     try:
-        response = get_supabase().table("incidents").select("*").order("created_at", desc=True).execute()
+        response = await asyncio.to_thread(
+            lambda: get_supabase().table("incidents").select("*").order("created_at", desc=True).execute()
+        )
         supabase_ids = {r["id"] for r in (response.data or []) if "id" in r}
         merged = []
         for r in (response.data or []):
@@ -119,10 +122,12 @@ async def create_incident(
                 try:
                     file_path = f"incidents/{uuid.uuid4()}.{file_ext}"
                     db = get_supabase()
-                    db.storage.from_("incidents").upload(
-                        path=file_path,
-                        file=content,
-                        options={"content-type": photo.content_type or "image/jpeg"},
+                    await asyncio.to_thread(
+                        lambda: db.storage.from_("incidents").upload(
+                            path=file_path,
+                            file=content,
+                            options={"content-type": photo.content_type or "image/jpeg"},
+                        )
                     )
                     photo_url = db.storage.from_("incidents").get_public_url(file_path)
                 except Exception as upload_err:
@@ -159,7 +164,9 @@ async def create_incident(
             "verified": is_verified_officer,
             "created_at": new_record["created_at"]
         }
-        resp = get_supabase().table("incidents").insert(db_payload).execute()
+        resp = await asyncio.to_thread(
+            lambda: get_supabase().table("incidents").insert(db_payload).execute()
+        )
         if resp.data:
             saved = True
             logger.info(f"Incident {new_record['id']} persisted to Supabase.")
@@ -205,8 +212,9 @@ async def assign_incident(
     }
     # PRIMARY: update in Supabase
     try:
-        resp = get_supabase().table("incidents") \
-            .update(update_data).eq("id", incident_id).execute()
+        resp = await asyncio.to_thread(
+            lambda: get_supabase().table("incidents").update(update_data).eq("id", incident_id).execute()
+        )
         if resp.data:
             return {"success": True, "data": resp.data[0], "error": None}
     except Exception as db_err:
@@ -239,16 +247,19 @@ async def register_community_response(incident_id: str, req: RespondIncidentRequ
     # Try Supabase RPC-style increment
     try:
         db = get_supabase()
-        current = db.table("incidents").select("people_responded,people_evacuated") \
-            .eq("id", incident_id).execute()
+        current = await asyncio.to_thread(
+            lambda: db.table("incidents").select("people_responded,people_evacuated").eq("id", incident_id).execute()
+        )
         if current.data:
             row = current.data[0]
             new_responded = (row.get("people_responded") or 0) + 1
             new_evacuated = (row.get("people_evacuated") or 0) + (1 if req.response_type == "evacuated" else 0)
-            resp = db.table("incidents").update({
-                "people_responded": new_responded,
-                "people_evacuated": new_evacuated
-            }).eq("id", incident_id).execute()
+            resp = await asyncio.to_thread(
+                lambda: db.table("incidents").update({
+                    "people_responded": new_responded,
+                    "people_evacuated": new_evacuated
+                }).eq("id", incident_id).execute()
+            )
             if resp.data:
                 return {"success": True, "data": resp.data[0], "error": None}
     except Exception as db_err:
@@ -294,8 +305,9 @@ async def resolve_incident(
     }
     # PRIMARY: Supabase
     try:
-        resp = get_supabase().table("incidents") \
-            .update(resolve_data).eq("id", incident_id).execute()
+        resp = await asyncio.to_thread(
+            lambda: get_supabase().table("incidents").update(resolve_data).eq("id", incident_id).execute()
+        )
         if resp.data:
             return {"success": True, "data": resp.data[0], "error": None}
     except Exception as db_err:
@@ -324,7 +336,9 @@ async def delete_incident(
     """Admin only: permanently delete a false / duplicate / test incident."""
     deleted_from_db = False
     try:
-        get_supabase().table("incidents").delete().eq("id", incident_id).execute()
+        await asyncio.to_thread(
+            lambda: get_supabase().table("incidents").delete().eq("id", incident_id).execute()
+        )
         deleted_from_db = True
         logger.info(f"Admin {caller.name} deleted incident {incident_id} from Supabase.")
     except Exception as db_err:
@@ -415,7 +429,9 @@ async def admin_create_incident(
             "people_evacuated": 0,
             "created_at": new_record["created_at"],
         }
-        resp = get_supabase().table("incidents").insert(db_payload).execute()
+        resp = await asyncio.to_thread(
+            lambda: get_supabase().table("incidents").insert(db_payload).execute()
+        )
         if resp.data:
             saved = True
             logger.info(f"Admin {admin_name} created incident {new_record['id']} in Supabase.")

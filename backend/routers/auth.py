@@ -9,6 +9,7 @@ Provides authentication with dedicated passwords:
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
 from typing import Optional, List
+import asyncio
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -92,11 +93,15 @@ async def login_or_register(req: AuthRequest):
         }
         try:
             db = get_supabase()
-            existing = db.table("users").select("*").eq("name", admin_name).eq("role", "admin").execute()
+            existing = await asyncio.to_thread(
+                lambda: db.table("users").select("*").eq("name", admin_name).eq("role", "admin").execute()
+            )
             if existing.data and len(existing.data) > 0:
                 user_record = existing.data[0]
             else:
-                resp = db.table("users").insert(user_record).execute()
+                resp = await asyncio.to_thread(
+                    lambda: db.table("users").insert(user_record).execute()
+                )
                 if resp.data:
                     user_record = resp.data[0]
         except Exception as e:
@@ -131,11 +136,15 @@ async def login_or_register(req: AuthRequest):
         }
         try:
             db = get_supabase()
-            existing = db.table("users").select("*").eq("name", officer_name).in_("role", ["field_officer", "officer"]).execute()
+            existing = await asyncio.to_thread(
+                lambda: db.table("users").select("*").eq("name", officer_name).in_("role", ["field_officer", "officer"]).execute()
+            )
             if existing.data and len(existing.data) > 0:
                 user_record = existing.data[0]
             else:
-                resp = db.table("users").insert(user_record).execute()
+                resp = await asyncio.to_thread(
+                    lambda: db.table("users").insert(user_record).execute()
+                )
                 if resp.data:
                     user_record = resp.data[0]
         except Exception as e:
@@ -171,7 +180,9 @@ async def login_or_register(req: AuthRequest):
         saved_db = False
         try:
             db = get_supabase()
-            resp = db.table("users").insert(user_record).execute()
+            resp = await asyncio.to_thread(
+                lambda: db.table("users").insert(user_record).execute()
+            )
             if resp.data:
                 user_record = resp.data[0]
                 saved_db = True
@@ -208,7 +219,7 @@ async def get_registered_users(role: Optional[str] = None):
                 query = query.in_("role", ["field_officer", "officer"])
             else:
                 query = query.eq("role", role)
-        resp = query.execute()
+        resp = await asyncio.to_thread(lambda: query.execute())
         if resp.data:
             return {"success": True, "data": resp.data, "source": "supabase"}
     except Exception as e:

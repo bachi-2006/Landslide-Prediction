@@ -47,9 +47,10 @@ def get_risk_level(score: float) -> str:
     if score < 0.80: return "High"
     return "Critical"
 
-def predict(features: Dict[str, Any]) -> PredictionResult:
+def predict(features: Dict[str, Any], explain: bool = True) -> PredictionResult:
     """
     Predicts landslide risk based on input features.
+    If explain=False, skips TreeSHAP calculation for ultra-fast inference (e.g. forecast loops).
     If no model is loaded, uses a weighted heuristic mock.
     """
     # Feature keys expected
@@ -70,37 +71,39 @@ def predict(features: Dict[str, Any]) -> PredictionResult:
         ]])
         score = float(model.predict_proba(feat_array)[0][1])
 
-        # Dynamic SHAP feature attribution
-        try:
-            shap_vals = explainer.shap_values(feat_array)[0]
-            feature_display_names = [
-                "Heavy Rainfall (1h)",
-                "Antecedent Rain (3h)",
-                "Cumulative Rain (24h)",
-                "Soil Moisture Saturation",
-                "High Elevation",
-                "Steep Terrain Slope",
-                "Historical Slide Frequency",
-                "Past Fatalities Severity"
-            ]
-            pos_impacts = {feature_display_names[i]: max(float(shap_vals[i]), 0.0) for i in range(len(feature_display_names))}
-            total_pos = sum(pos_impacts.values())
-            if total_pos > 0:
-                pcts = {k: round((v / total_pos) * 100, 1) for k, v in pos_impacts.items()}
-            else:
-                abs_impacts = {feature_display_names[i]: abs(float(shap_vals[i])) for i in range(len(feature_display_names))}
-                total_abs = sum(abs_impacts.values()) or 1.0
-                pcts = {k: round((v / total_abs) * 100, 1) for k, v in abs_impacts.items()}
-            
-            # Keep top 4 contributing factors
-            factors = dict(sorted(pcts.items(), key=lambda x: x[1], reverse=True)[:4])
-        except Exception as e:
-            logger.warning(f"SHAP explanation computation failed: {e}. Falling back to baseline factors.")
-            factors = {
-                "Rainfall Trigger": 55.0,
-                "Terrain Slope": 30.0,
-                "Soil Saturation": 15.0
-            }
+        factors = {}
+        # Dynamic SHAP feature attribution (only computed when explain=True)
+        if explain and explainer is not None:
+            try:
+                shap_vals = explainer.shap_values(feat_array)[0]
+                feature_display_names = [
+                    "Heavy Rainfall (1h)",
+                    "Antecedent Rain (3h)",
+                    "Cumulative Rain (24h)",
+                    "Soil Moisture Saturation",
+                    "High Elevation",
+                    "Steep Terrain Slope",
+                    "Historical Slide Frequency",
+                    "Past Fatalities Severity"
+                ]
+                pos_impacts = {feature_display_names[i]: max(float(shap_vals[i]), 0.0) for i in range(len(feature_display_names))}
+                total_pos = sum(pos_impacts.values())
+                if total_pos > 0:
+                    pcts = {k: round((v / total_pos) * 100, 1) for k, v in pos_impacts.items()}
+                else:
+                    abs_impacts = {feature_display_names[i]: abs(float(shap_vals[i])) for i in range(len(feature_display_names))}
+                    total_abs = sum(abs_impacts.values()) or 1.0
+                    pcts = {k: round((v / total_abs) * 100, 1) for k, v in abs_impacts.items()}
+                
+                # Keep top 4 contributing factors
+                factors = dict(sorted(pcts.items(), key=lambda x: x[1], reverse=True)[:4])
+            except Exception as e:
+                logger.warning(f"SHAP explanation computation failed: {e}. Falling back to baseline factors.")
+                factors = {
+                    "Rainfall Trigger": 55.0,
+                    "Terrain Slope": 30.0,
+                    "Soil Saturation": 15.0
+                }
     else:
         # Heuristic Logic fallback:
         # Risk = (Rain * 0.5) + (Slope * 0.3) + (Hist * 0.2)

@@ -6,13 +6,15 @@ Handles endpoints for retrieving and updating district landslide risk.
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Dict, Any
 from backend.db.supabase_client import SupabaseNotConfiguredError, get_supabase
-from backend.services.weather import fetch_weather
+from backend.services.weather import fetch_weather, fetch_weather_forecast
 from backend.services.elevation import fetch_elevation_and_slope
 from backend.services.model import predict
 from backend.services.auth import require_admin
 from datetime import datetime, timedelta, timezone
-
+import logging
 import time
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/risk", tags=["Risk"])
 
@@ -62,7 +64,7 @@ async def refresh_district_risk(district_id: str, district_name: str, lat: float
     try:
         from backend.routers.incidents import IN_MEMORY_INCIDENTS
         db = get_supabase()
-        inc_resp = db.table("incidents").select("latitude,longitude,reporter_role,verification_status").execute()
+        inc_resp = await asyncio.to_thread(db.table("incidents").select("latitude,longitude,reporter_role,verification_status").execute)
         inc_list = list(inc_resp.data or [])
         for inc in IN_MEMORY_INCIDENTS:
             inc_list.append(inc)
@@ -124,7 +126,7 @@ async def refresh_district_risk(district_id: str, district_name: str, lat: float
     }
 
 
-    db.table("district_risk").upsert(payload, on_conflict="district_id").execute()
+    await asyncio.to_thread(db.table("district_risk").upsert(payload, on_conflict="district_id").execute)
     return payload
 
 @router.post("/simulate")
@@ -173,7 +175,7 @@ async def simulate_district_risk(req: SimulationRequest, _: str = Depends(requir
         # Save to DB if Supabase is connected
         try:
             db = get_supabase()
-            db.table("district_risk").upsert(payload, on_conflict="district_id").execute()
+            await asyncio.to_thread(db.table("district_risk").upsert(payload, on_conflict="district_id").execute)
         except Exception:
             pass
 
@@ -186,7 +188,7 @@ async def simulate_district_risk(req: SimulationRequest, _: str = Depends(requir
 async def get_all_risks():
     """Returns risk scores for all districts."""
     try:
-        response = get_supabase().table("district_risk").select("*").execute()
+        response = await asyncio.to_thread(get_supabase().table("district_risk").select("*").execute)
         return {"success": True, "data": response.data, "error": None}
     except SupabaseNotConfiguredError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -204,7 +206,7 @@ async def get_district_risk(district_id: str):
     try:
         data = None
         try:
-            response = get_supabase().table("district_risk").select("*").eq("district_id", district_id).execute()
+            response = await asyncio.to_thread(get_supabase().table("district_risk").select("*").eq("district_id", district_id).execute)
             if response.data:
                 data = response.data[0]
         except Exception:
@@ -265,17 +267,32 @@ class PointRiskRequest(BaseModel):
     longitude: Optional[float] = None
     label: Optional[str] = "Incident Location"
 
+def _fetch_incidents_sync() -> list:
+    try:
+        db = get_supabase()
+        resp = db.table("incidents").select("id,latitude,longitude,reporter_role,verification_status,description").execute()
+        return resp.data or []
+    except Exception as e:
+        logger.warning(f"Failed to fetch incidents in thread: {e}")
+        return []
+
+def _fetch_districts_sync() -> list:
+    try:
+        db = get_supabase()
+        resp = db.table("district_risk").select("district_id,district_name,risk_level,risk_score").execute()
+        return resp.data or []
+    except Exception as e:
+        logger.warning(f"Failed to fetch district risk in thread: {e}")
+        return []
+
 @router.post("/point")
 async def calculate_point_risk(req: PointRiskRequest):
     """
     Real-time micro-site & spatial neighborhood landslide risk calculation.
-    1. Fetches exact micro-site weather and high-resolution SRTM slope/elevation.
-    2. Queries surrounding regional context:
-       - Active incidents reported within 25km.
-       - GSI historical landslide density in concentric radii (5km, 15km, 30km).
-       - Live risk levels of adjacent/nearby districts in Supabase.
-    3. Runs XGBoost AI inference with spatial weighting.
-    4. Computes 3-day (+24h, +48h, +72h) predictive risk forecast trajectory.
+    1. Concurrently fetches micro-site weather, high-resolution SRTM slope/elevation, 3-day forecast,
+       active incidents, and regional district risk.
+    2. Runs XGBoost AI inference with spatial weighting.
+    3. Computes 3-day (+24h, +48h, +72h) predictive risk forecast trajectory.
     """
     try:
         resolved_lat = req.lat if req.lat is not None else (req.latitude if req.latitude is not None else 25.5788)
@@ -287,18 +304,30 @@ async def calculate_point_risk(req: PointRiskRequest):
         if cached_entry and (time.time() - cached_entry[1]) < POINT_CACHE_TTL:
             return cached_entry[0]
 
-        weather_task = fetch_weather(resolved_lat, resolved_lon)
-        topo_task = fetch_elevation_and_slope(resolved_lat, resolved_lon)
-        weather, topo = await asyncio.gather(weather_task, topo_task)
+        # Parallelize all 5 external I/O and database operations
+        weather_res, topo_res, forecast_res, incidents_raw, districts_raw = await asyncio.gather(
+            fetch_weather(resolved_lat, resolved_lon),
+            fetch_elevation_and_slope(resolved_lat, resolved_lon),
+            fetch_weather_forecast(resolved_lat, resolved_lon),
+            asyncio.to_thread(_fetch_incidents_sync),
+            asyncio.to_thread(_fetch_districts_sync),
+            return_exceptions=True
+        )
+
+        weather = weather_res if isinstance(weather_res, dict) else {}
+        topo = topo_res if isinstance(topo_res, dict) else {}
+        forecast_steps = forecast_res if isinstance(forecast_res, list) else []
+        db_incidents = incidents_raw if isinstance(incidents_raw, list) else []
+        districts_data = districts_raw if isinstance(districts_raw, list) else []
 
         # Telemetry fallbacks if external services are throttled
-        w_rain_1h = weather.get("rain_1h", 12.0) if weather else 12.0
-        w_rain_3h = weather.get("rain_3h", 28.0) if weather else 28.0
-        w_rain_24h = weather.get("rain_24h", 65.0) if weather else 65.0
-        w_soil = weather.get("soil_moisture", 0.42) if weather else 0.42
+        w_rain_1h = weather.get("rain_1h", 12.0)
+        w_rain_3h = weather.get("rain_3h", 28.0)
+        w_rain_24h = weather.get("rain_24h", 65.0)
+        w_soil = weather.get("soil_moisture", 0.42)
 
-        e_elev = topo.get("elevation", 950.0) if topo else 950.0
-        e_slope = topo.get("slope", 32.5) if topo else 32.5
+        e_elev = topo.get("elevation", 950.0)
+        e_slope = topo.get("slope", 32.5)
 
         # 1. Query GSI historical landslides & accidents occurred at this specific area/point
         from backend.services.landslide_history import get_accident_stats_at_point
@@ -313,18 +342,18 @@ async def calculate_point_risk(req: PointRiskRequest):
         nearby_incidents = []
         officer_incidents = []
         citizen_incidents = []
+        all_incidents = list(db_incidents)
         try:
             from backend.routers.incidents import IN_MEMORY_INCIDENTS
-            db = get_supabase()
-            inc_resp = db.table("incidents").select("*").execute()
-            all_incidents = list(inc_resp.data or [])
-            # Also combine in-memory incidents
-            existing_ids = {i.get("id") for i in all_incidents}
+            existing_ids = {i.get("id") for i in all_incidents if i.get("id")}
             for inc in IN_MEMORY_INCIDENTS:
                 if inc.get("id") not in existing_ids:
                     all_incidents.append(inc)
+        except Exception:
+            pass
 
-            for inc in all_incidents:
+        for inc in all_incidents:
+            try:
                 i_lat = float(inc.get("latitude", 0))
                 i_lon = float(inc.get("longitude", 0))
                 dist_approx_km = ((resolved_lat - i_lat)**2 + (resolved_lon - i_lon)**2)**0.5 * 111.0
@@ -341,24 +370,17 @@ async def calculate_point_risk(req: PointRiskRequest):
                         officer_incidents.append(inc_record)
                     else:
                         citizen_incidents.append(inc_record)
-        except Exception as inc_err:
-            logger.warning(f"Nearby incidents check skipped: {inc_err}")
+            except Exception:
+                continue
 
         # 3. Nearby Regional District Context
         nearby_districts = []
         regional_risk_multiplier = 1.0
-        try:
-            db = get_supabase()
-            d_resp = db.table("district_risk").select("district_id,district_name,risk_level,risk_score").execute()
-            districts_data = d_resp.data or []
-            if districts_data:
-                # Top high risk districts in region
-                high_nearby = [d for d in districts_data if d.get("risk_level") in ["High", "Critical"]]
-                if high_nearby:
-                    regional_risk_multiplier = 1.15  # Neighboring district alert uplift
-                nearby_districts = districts_data[:4]
-        except Exception:
-            pass
+        if districts_data:
+            high_nearby = [d for d in districts_data if d.get("risk_level") in ["High", "Critical"]]
+            if high_nearby:
+                regional_risk_multiplier = 1.15  # Neighboring district alert uplift
+            nearby_districts = districts_data[:4]
 
         # Feature vector for XGBoost
         features = {
@@ -372,8 +394,8 @@ async def calculate_point_risk(req: PointRiskRequest):
             "hist_fatalities": 1 if hist_count_5km > 3 or hist_count > 10 else 0
         }
 
-        # Run real AI inference
-        result = predict(features)
+        # Run real AI inference with SHAP factors for primary point
+        result = predict(features, explain=True)
         base_score = result["risk_score"]
         
         # Ground-truth multi-factor calibration for realistic percentages across non-critical regions
@@ -393,16 +415,12 @@ async def calculate_point_risk(req: PointRiskRequest):
             "accidents_at_site_5km": hist_count_5km,
             "nearby_active_incidents": len(nearby_incidents),
             "officer_verified_incidents": len(officer_incidents),
-            "latitude": round(req.lat, 4),
-            "longitude": round(req.lon, 4),
+            "latitude": round(resolved_lat, 4),
+            "longitude": round(resolved_lon, 4),
             "label": req.label
         }
 
-
-        # 4. Real 3-Day Forecast Trajectory (+24h, +48h, +72h) via XGBoost inference
-        from backend.services.weather import fetch_weather_forecast
-        forecast_steps = await fetch_weather_forecast(req.lat, req.lon)
-
+        # 4. Real 3-Day Forecast Trajectory (+24h, +48h, +72h) via fast XGBoost inference (explain=False)
         predictions_timeline = [
             {
                 "timeframe": "Current (Now)",
@@ -426,7 +444,8 @@ async def calculate_point_risk(req: PointRiskRequest):
             f_features["rain_24h"] = f_rain
             f_features["soil_moisture"] = f_soil
 
-            f_res = predict(f_features)
+            # Fast inference without re-running TreeSHAP (saves ~1.5s - 2.5s)
+            f_res = predict(f_features, explain=False)
             f_score = min(0.98, max(0.05, round(f_res["risk_score"] * regional_risk_multiplier + incident_uplift, 3)))
             f_level = "Critical" if f_score >= 0.75 else "High" if f_score >= 0.50 else "Moderate" if f_score >= 0.25 else "Low"
 
@@ -438,7 +457,6 @@ async def calculate_point_risk(req: PointRiskRequest):
                 "predicted_level": f_level
             })
 
-
         regional_context = {
             "historical_density_zone": density_zone,
             "nearby_historical_count": hist_count_25km,
@@ -449,7 +467,6 @@ async def calculate_point_risk(req: PointRiskRequest):
             "regional_multiplier_applied": regional_risk_multiplier > 1.0,
             "adjacent_districts_monitored": len(nearby_districts)
         }
-
 
         response_data = {
             "success": True,

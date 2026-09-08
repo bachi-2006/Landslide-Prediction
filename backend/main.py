@@ -88,13 +88,32 @@ async def scheduled_risk_monitoring_cycle():
 
     await asyncio.gather(*(update_one(d) for d in MONITORED_SENTINEL_DISTRICTS), return_exceptions=True)
 
+async def render_keep_alive_task():
+    """
+    Periodically pings the server's public health endpoint (every 10m) to keep
+    Render free-tier instances active and prevent cold starts (15m spin-down).
+    """
+    import httpx
+    base_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("BACKEND_URL")
+    if not base_url:
+        return
+    try:
+        url = f"{base_url.rstrip('/')}/health"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url)
+            logger.info(f"[KEEP-ALIVE] Pinged {url} -> status {resp.status_code}")
+    except Exception as e:
+        logger.debug(f"[KEEP-ALIVE] Ping note: {e}")
+
 @app.on_event("startup")
 async def start_background_monitoring():
     """Starts background risk surveillance on server launch."""
-    # Run every 30 minutes in background
+    # Run regional risk update every 30 minutes
     scheduler.add_job(scheduled_risk_monitoring_cycle, "interval", minutes=30, id="periodic_risk_refresh")
+    # Keep Render free-tier container warm every 10 minutes
+    scheduler.add_job(render_keep_alive_task, "interval", minutes=10, id="render_keep_alive")
     scheduler.start()
-    logging.getLogger("uvicorn").info("NE-SHIELD Background Risk Surveillance Scheduler Armed (30m cycle).")
+    logging.getLogger("uvicorn").info("NE-SHIELD Background Schedulers Armed (Risk Refresh 30m, Keep-Alive 10m).")
 
 @app.on_event("shutdown")
 async def stop_background_monitoring():

@@ -1086,7 +1086,7 @@ async def create_relief_request(req: ReliefAidRequest):
     saved_to_db = False
     try:
         db = get_supabase()
-        resp = db.table("relief_requests").insert(record).execute()
+        resp = await asyncio.to_thread(lambda: db.table("relief_requests").insert(record).execute())
         if resp.data:
             saved_to_db = True
     except Exception as db_err:
@@ -1103,7 +1103,9 @@ async def get_relief_requests(locality_name: Optional[str] = None, lat: Optional
     """
     try:
         db = get_supabase()
-        res = db.table("relief_requests").select("*").order("created_at", desc=True).execute()
+        res = await asyncio.to_thread(
+            lambda: db.table("relief_requests").select("*").order("created_at", desc=True).execute()
+        )
         if res.data:
             # Merge with in-memory
             existing_ids = {r["id"] for r in res.data}
@@ -1184,21 +1186,35 @@ async def calculate_location_evacuation(req: EvacuationPromptRequest):
     shelters.sort(key=lambda x: x["distance_km"])
     nearest_shelter = shelters[0]
 
-    # 2. Compute safe evacuation route
-    evac_route = await get_alternative_route(
+    # 2. Concurrently compute route, weather, elevation, and lean incidents
+    def _fetch_incidents_lean():
+        try:
+            from backend.db.supabase_client import get_supabase
+            db = get_supabase()
+            resp = db.table("incidents").select("id,latitude,longitude,reporter_role,verification_status").execute()
+            return resp.data or []
+        except Exception as e:
+            logger.warning(f"Incidents loading note: {e}")
+            return []
+
+    route_task = get_alternative_route(
         (target_lat, target_lon),
         (nearest_shelter["latitude"], nearest_shelter["longitude"])
     )
+    weather_task = fetch_weather(target_lat, target_lon)
+    topo_task = fetch_elevation_and_slope(target_lat, target_lon)
+    incidents_task = asyncio.to_thread(_fetch_incidents_lean)
 
-    # 3. Run real XGBoost risk inference for the target location
-    try:
-        weather, topo = await asyncio.gather(
-            fetch_weather(target_lat, target_lon),
-            fetch_elevation_and_slope(target_lat, target_lon)
-        )
-    except Exception as e:
-        logger.warning(f"Weather/topo fetch failed for evacuate endpoint: {e}")
-        weather, topo = None, None
+    route_res, weather_res, topo_res, inc_data_res = await asyncio.gather(
+        route_task, weather_task, topo_task, incidents_task, return_exceptions=True
+    )
+
+    evac_route = route_res if isinstance(route_res, dict) else {
+        "distance_km": 0.0, "duration_minutes": 0.0, "route": [], "hazard_warnings": []
+    }
+    weather = weather_res if isinstance(weather_res, dict) else None
+    topo = topo_res if isinstance(topo_res, dict) else None
+    db_incidents = inc_data_res if isinstance(inc_data_res, list) else []
 
     w_rain_1h      = weather.get("rain_1h", 12.0)      if weather else 12.0
     w_rain_3h      = weather.get("rain_3h", 28.0)      if weather else 28.0
@@ -1219,16 +1235,12 @@ async def calculate_location_evacuation(req: EvacuationPromptRequest):
     try:
         from backend.routers.incidents import IN_MEMORY_INCIDENTS
         inc_list.extend(list(IN_MEMORY_INCIDENTS))
-        from backend.db.supabase_client import get_supabase
-        db = get_supabase()
-        inc_resp = db.table("incidents").select("*").execute()
-        if inc_resp.data:
-            existing_ids = {i.get("id") for i in inc_list}
-            for inc in inc_resp.data:
-                if inc.get("id") not in existing_ids:
-                    inc_list.append(inc)
+        existing_ids = {i.get("id") for i in inc_list if i.get("id")}
+        for inc in db_incidents:
+            if inc.get("id") not in existing_ids:
+                inc_list.append(inc)
     except Exception as e:
-        logger.warning(f"Incidents loading note: {e}")
+        logger.warning(f"Incidents merge note: {e}")
 
     for inc in inc_list:
         try:
