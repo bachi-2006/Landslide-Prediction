@@ -149,17 +149,24 @@ export default function MobileMapView({
   // When user taps anywhere on map
   const handleMapTap = async (lat, lon) => {
     setInspectedPoint({ lat, lon, label: `Point (${lat.toFixed(4)}, ${lon.toFixed(4)})` });
-    setCalculatingPoint(true);
-    setPointCalculation(null);
 
-    try {
-      const res = await mobileApi.calculatePointRisk(lat, lon, 'Field Tap');
-      if (res.success) {
-        setPointCalculation(res.data);
+    // Slope, rainfall & AI risk calculation is strictly reserved for Field Officers & Admins
+    if (userRole === 'field_officer' || userRole === 'admin') {
+      setCalculatingPoint(true);
+      setPointCalculation(null);
+
+      try {
+        const res = await mobileApi.calculatePointRisk(lat, lon, 'Field Tap');
+        if (res.success) {
+          setPointCalculation(res.data);
+        }
+      } catch (e) {
+        console.warn("Point risk calculation fallback:", e);
+      } finally {
+        setCalculatingPoint(false);
       }
-    } catch (e) {
-      console.warn("Point risk calculation fallback:", e);
-    } finally {
+    } else {
+      setPointCalculation(null);
       setCalculatingPoint(false);
     }
   };
@@ -344,36 +351,71 @@ export default function MobileMapView({
               <div style={{ padding: '8px', maxWidth: '250px', fontSize: '11px', fontFamily: 'sans-serif' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', borderBottom: '1px solid #e2e8f0', paddingBottom: '4px' }}>
                   <span style={{ background: '#eff6ff', color: '#2563eb', fontWeight: 'bold', fontSize: '10px', padding: '2px 6px', borderRadius: '999px', border: '1px solid #bfdbfe' }}>
-                    📍 Real-Time Telemetry
+                    {userRole === 'field_officer' || userRole === 'admin' ? '📍 Field Telemetry' : '📍 Pinned Location'}
                   </span>
                   <span style={{ fontSize: '9px', color: '#64748b' }}>
                     {inspectedPoint.lat.toFixed(3)}°, {inspectedPoint.lon.toFixed(3)}°
                   </span>
                 </div>
 
-                {calculatingPoint ? (
-                  <div style={{ padding: '12px 0', textAlign: 'center', color: '#64748b' }}>
-                    <span>Calculating slope, rainfall & AI risk...</span>
-                  </div>
-                ) : pointCalculation ? (
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '24px', fontWeight: 'bold', color: pointCalculation.risk_score >= 0.7 ? '#dc2626' : '#d97706' }}>
-                        {Math.round(pointCalculation.risk_score * 100)}%
-                      </span>
-                      <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#475569' }}>
-                        {pointCalculation.risk_level} Exposure
-                      </span>
+                {/* Micro-site slope, rainfall & AI risk calculation is EXCLUSIVELY for Field Officers & Admins */}
+                {userRole === 'field_officer' || userRole === 'admin' ? (
+                  calculatingPoint ? (
+                    <div style={{ padding: '12px 0', textAlign: 'center', color: '#64748b' }}>
+                      <span>Calculating slope, rainfall & AI risk...</span>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', fontSize: '10px', background: '#f8fafc', padding: '6px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                      <span>🌧️ Rain: <strong>{pointCalculation.telemetry?.rain_24h_mm ?? 55}mm</strong></span>
-                      <span>⛰️ Slope: <strong>{pointCalculation.telemetry?.slope_deg ?? 32}°</strong></span>
-                      <span>📈 Saturation: <strong>{Math.round((pointCalculation.telemetry?.soil_moisture ?? 0.7) * 100)}%</strong></span>
-                      <span>🏢 GSI Events: <strong>{pointCalculation.telemetry?.hist_landslides ?? 3}</strong></span>
+                  ) : pointCalculation ? (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '24px', fontWeight: 'bold', color: pointCalculation.risk_score >= 0.7 ? '#dc2626' : '#d97706' }}>
+                          {Math.round(pointCalculation.risk_score * 100)}%
+                        </span>
+                        <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#475569' }}>
+                          {pointCalculation.risk_level} Exposure
+                        </span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', fontSize: '10px', background: '#f8fafc', padding: '6px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                        <span>🌧️ Rain: <strong>{pointCalculation.telemetry?.rain_24h_mm ?? 55}mm</strong></span>
+                        <span>⛰️ Slope: <strong>{pointCalculation.telemetry?.slope_deg ?? 32}°</strong></span>
+                        <span>📈 Saturation: <strong>{Math.round((pointCalculation.telemetry?.soil_moisture ?? 0.7) * 100)}%</strong></span>
+                        <span>🏢 GSI Events: <strong>{pointCalculation.telemetry?.hist_landslides ?? 3}</strong></span>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <p style={{ margin: 0, color: '#64748b' }}>Tapped location on mountain slope.</p>
+                  )
                 ) : (
-                  <p style={{ margin: 0, color: '#64748b' }}>Tapped location on mountain slope.</p>
+                  /* Citizen view: ONLY coordinates and Report Incident CTA, NO technical calculations */
+                  <div style={{ padding: '4px 0' }}>
+                    <p style={{ margin: '0 0 8px', color: '#475569', fontSize: '11px', lineHeight: '1.4' }}>
+                      Selected mountain slope location. Notice any active rockfall, road fissure, or water clogging here?
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onOpenReport) {
+                          onOpenReport({
+                            lat: inspectedPoint.lat,
+                            lon: inspectedPoint.lon,
+                            label: `${inspectedPoint.lat.toFixed(4)}° N, ${inspectedPoint.lon.toFixed(4)}° E (Pinned on Map)`
+                          });
+                        }
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '7px 10px',
+                        background: '#dc2626',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontWeight: 'bold',
+                        fontSize: '11px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      🚨 Report Hazard Here
+                    </button>
+                  </div>
                 )}
               </div>
             </Popup>

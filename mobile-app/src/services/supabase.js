@@ -13,6 +13,7 @@ export const subscribeToMapUpdates = (onUpdate) => {
         .channel('ne-shield-mobile-map-updates')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'district_risk' }, onUpdate)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, onUpdate)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, onUpdate)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'alerts' }, (payload) => {
             if (payload?.new) {
                 // Trigger live alert popup & notification immediately on mobile

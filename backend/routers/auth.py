@@ -78,18 +78,36 @@ async def login_or_register(req: AuthRequest):
                 detail="Invalid Admin Password. Access Denied."
             )
         admin_name = req.name.strip() or "SEOC State Commander"
-        token = create_session(role="admin", user_name=admin_name, district=req.district or "Meghalaya State HQ")
+        admin_district = req.district or "Meghalaya State HQ"
+        admin_unit = "NDMA / State Emergency Operations Center"
+
+        user_record = {
+            "id": str(uuid.uuid4()),
+            "name": admin_name,
+            "role": "admin",
+            "unit": admin_unit,
+            "district": admin_district,
+            "phone": req.phone.strip() if req.phone else "",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        try:
+            db = get_supabase()
+            existing = db.table("users").select("*").eq("name", admin_name).eq("role", "admin").execute()
+            if existing.data and len(existing.data) > 0:
+                user_record = existing.data[0]
+            else:
+                resp = db.table("users").insert(user_record).execute()
+                if resp.data:
+                    user_record = resp.data[0]
+        except Exception as e:
+            logger.warning(f"Supabase admin user save note: {e}")
+
+        token = create_session(role="admin", user_name=admin_name, district=admin_district)
         return {
             "success": True,
             "role": "admin",
             "token": token,
-            "user": {
-                "id": str(uuid.uuid4()),
-                "name": admin_name,
-                "role": "admin",
-                "unit": "NDMA / State Emergency Operations Center",
-                "district": req.district or "Meghalaya State HQ"
-            }
+            "user": user_record
         }
 
     elif requested_role in ["field_officer", "officer", "sdrf"]:
@@ -99,23 +117,41 @@ async def login_or_register(req: AuthRequest):
                 detail="Invalid Field Officer Password. Access Denied."
             )
         officer_name = req.name.strip() or "Insp. K. Sangma"
+        officer_district = req.district or "East Khasi Hills"
+        officer_unit = req.unit.strip() if req.unit else "SDRF Rapid Response Team 1"
+
+        user_record = {
+            "id": str(uuid.uuid4()),
+            "name": officer_name,
+            "role": "field_officer",
+            "unit": officer_unit,
+            "district": officer_district,
+            "phone": req.phone.strip() if req.phone else "",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        try:
+            db = get_supabase()
+            existing = db.table("users").select("*").eq("name", officer_name).in_("role", ["field_officer", "officer"]).execute()
+            if existing.data and len(existing.data) > 0:
+                user_record = existing.data[0]
+            else:
+                resp = db.table("users").insert(user_record).execute()
+                if resp.data:
+                    user_record = resp.data[0]
+        except Exception as e:
+            logger.warning(f"Supabase officer user save note: {e}")
+
         token = create_session(
             role="field_officer", 
             user_name=officer_name, 
-            district=req.district or "East Khasi Hills",
-            unit=req.unit.strip() or "SDRF Rapid Response Team 1"
+            district=officer_district,
+            unit=officer_unit
         )
         return {
             "success": True,
             "role": "field_officer",
             "token": token,
-            "user": {
-                "id": str(uuid.uuid4()),
-                "name": officer_name,
-                "role": "field_officer",
-                "unit": req.unit.strip() or "SDRF Rapid Response Team 1",
-                "district": req.district or "East Khasi Hills"
-            }
+            "user": user_record
         }
 
     elif requested_role == "citizen":
@@ -126,6 +162,7 @@ async def login_or_register(req: AuthRequest):
             "name": citizen_name,
             "phone": req.phone.strip() if req.phone else "",
             "district": req.district.strip() if req.district else "East Khasi Hills",
+            "unit": "Citizen Community",
             "role": "citizen",
             "created_at": datetime.now(timezone.utc).isoformat()
         }
@@ -161,14 +198,23 @@ async def login_or_register(req: AuthRequest):
 
 
 @router.get("/users")
-async def get_registered_users():
-    """Returns list of registered citizens from Supabase (or memory)."""
+async def get_registered_users(role: Optional[str] = None):
+    """Returns list of registered users/officers from Supabase (or memory), optionally filtered by role."""
     try:
         db = get_supabase()
-        resp = db.table("users").select("*").order("created_at", desc=True).execute()
+        query = db.table("users").select("*").order("created_at", desc=True)
+        if role:
+            if role in ["field_officer", "officer"]:
+                query = query.in_("role", ["field_officer", "officer"])
+            else:
+                query = query.eq("role", role)
+        resp = query.execute()
         if resp.data:
             return {"success": True, "data": resp.data, "source": "supabase"}
     except Exception as e:
         logger.warning(f"Supabase users fetch note: {e}")
 
-    return {"success": True, "data": IN_MEMORY_USERS, "source": "in_memory"}
+    filtered = IN_MEMORY_USERS
+    if role:
+        filtered = [u for u in IN_MEMORY_USERS if u.get("role") == role or (role in ["field_officer", "officer"] and u.get("role") in ["field_officer", "officer"])]
+    return {"success": True, "data": filtered, "source": "in_memory"}

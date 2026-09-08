@@ -12,6 +12,8 @@ export const subscribeToMapUpdates = (onUpdate) => {
         .channel('ne-shield-map-updates')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'district_risk' }, onUpdate)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, onUpdate)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'alerts' }, onUpdate)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, onUpdate)
         .subscribe();
 
     return () => {

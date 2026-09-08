@@ -34,6 +34,7 @@ const App = () => {
     const [riskRefreshKey, setRiskRefreshKey] = useState(0);
     const [mapData, setMapData] = useState({ geoJsonData: null, risks: [] });
     const [reportCoords, setReportCoords] = useState(null);
+    const [mapTargetLocation, setMapTargetLocation] = useState(null);
 
     const [lang, setLang] = useState(() => localStorage.getItem('ne_shield_lang') || 'en');
     const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -209,6 +210,7 @@ const App = () => {
                         refreshKey={riskRefreshKey}
                         onDataLoaded={setMapData}
                         activeRole={activeRole}
+                        targetLocation={mapTargetLocation}
                     />
                 </div>
             </div>
@@ -251,6 +253,10 @@ const App = () => {
                     activeRole={activeRole}
                     onSelectDistrict={(feature) => setSelectedDistrict(feature)}
                     onIncidentUpdated={() => setRiskRefreshKey(k => k + 1)}
+                    onLocateLocation={(lat, lon, zoom = 15) => {
+                        setMapTargetLocation({ lat, lon, zoom });
+                        setShowEmergencyDashboard(false);
+                    }}
                     onClose={() => setShowEmergencyDashboard(false)}
                 />
             )}

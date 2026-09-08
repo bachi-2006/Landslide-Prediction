@@ -64,7 +64,9 @@ export const BUNDLED_INCIDENTS = [
     verified: true,
     verification_status: 'verified',
     severity: 'High',
-    status: 'investigating',
+    status: 'assigned',
+    assigned_officer: 'Insp. K. Sangma',
+    officer_unit: '1st SDRF Rapid Response Bn',
     people_responded: 8,
     created_at: new Date(Date.now() - 3600000).toISOString()
   },
@@ -77,7 +79,9 @@ export const BUNDLED_INCIDENTS = [
     verified: true,
     verification_status: 'verified',
     severity: 'Moderate',
-    status: 'open',
+    status: 'in_progress',
+    assigned_officer: 'Inspector H. Lyngdoh',
+    officer_unit: 'SDRF Patrol Alpha',
     people_responded: 5,
     created_at: new Date(Date.now() - 7200000).toISOString()
   },
@@ -114,10 +118,10 @@ export const BUNDLED_LOCALITIES = [
 ];
 
 export const BUNDLED_ROAD_CORRIDORS = [
-  { id: "NH-06", name: "NH-6 (Guwahati - Shillong - Silchar)", district: "East Khasi Hills", status: "Caution", passability: 85, cutting_slope_risk: "Moderate" },
-  { id: "NH-206", name: "NH-206 (Mawphlang - Cherrapunji Relief Corridor)", district: "East Khasi Hills", status: "Clear", passability: 96, cutting_slope_risk: "Low" },
-  { id: "NH-29", name: "NH-29 (Dimapur - Kohima Corridor)", district: "Kohima", status: "Caution", passability: 78, cutting_slope_risk: "High" },
-  { id: "NH-54", name: "NH-54 (Silchar - Aizawl Corridor)", district: "Aizawl", status: "Clear", passability: 90, cutting_slope_risk: "Low" }
+  { id: "NH-06", corridor_id: "NH-06", name: "NH-6 (Guwahati - Shillong - Silchar)", corridor_name: "NH-6 (Guwahati - Shillong - Silchar)", district: "East Khasi Hills", status: "Caution", passability: 85, passable: true, recommended_speed_kmh: 40, cutting_slope_risk: "Moderate" },
+  { id: "NH-206", corridor_id: "NH-206", name: "NH-206 (Mawphlang - Cherrapunji Relief Corridor)", corridor_name: "NH-206 (Mawphlang - Cherrapunji Relief Corridor)", district: "East Khasi Hills", status: "Clear", passability: 96, passable: true, recommended_speed_kmh: 55, cutting_slope_risk: "Low" },
+  { id: "NH-29", corridor_id: "NH-29", name: "NH-29 (Dimapur - Kohima Corridor)", corridor_name: "NH-29 (Dimapur - Kohima Corridor)", district: "Kohima", status: "Caution", passability: 78, passable: true, recommended_speed_kmh: 35, cutting_slope_risk: "High" },
+  { id: "NH-54", corridor_id: "NH-54", name: "NH-54 (Silchar - Aizawl Corridor)", corridor_name: "NH-54 (Silchar - Aizawl Corridor)", district: "Aizawl", status: "Clear", passability: 90, passable: true, recommended_speed_kmh: 50, cutting_slope_risk: "Low" }
 ];
 
 const BUNDLED_CENTRES = [
@@ -178,6 +182,7 @@ function generateLocalOfflinePack(payload = {}) {
 export const mobileApi = {
   // 0. Auth & Identity
   async loginOrRegister(payload) {
+    let result = null;
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
@@ -188,16 +193,94 @@ export const mobileApi = {
         signal: controller.signal
       });
       clearTimeout(timeoutId);
-      const data = await res.json();
-      if (data && data.token && typeof window !== 'undefined') {
-        sessionStorage.setItem('neshield_auth_token', data.token);
-        localStorage.setItem('neshield_auth_token', data.token);
+      if (res.ok) {
+        result = await res.json();
       }
-      return data;
     } catch (e) {
-      console.warn("Backend auth offline, saving session locally:", e);
-      return { success: true, token: 'local_token_' + Date.now(), user: payload };
+      console.warn("Backend auth offline, proceeding with direct Supabase / local authentication:", e);
     }
+
+    const role = (payload.role || 'citizen').toLowerCase();
+    const name = payload.name?.trim() || (role === 'admin' ? 'SEOC Commander' : role === 'field_officer' ? 'Insp. K. Sangma' : 'Citizen Resident');
+    const district = payload.district || 'East Khasi Hills';
+    const unit = payload.unit || (role === 'field_officer' ? 'SDRF Rapid Response Team 1' : role === 'admin' ? 'NDMA / State Emergency Operations Center' : 'Citizen Community');
+    const phone = payload.phone || '';
+
+    // Validate password for admin and field_officer if backend was offline
+    if (!result || !result.success) {
+      if (role === 'admin' && String(payload.password || '').trim() !== '99') {
+        throw new Error('Invalid Admin Password. Access Denied.');
+      }
+      if (role === 'field_officer' && String(payload.password || '').trim() !== '9') {
+        throw new Error('Invalid Field Officer Password. Access Denied.');
+      }
+      result = {
+        success: true,
+        token: `session_${role}_${Date.now()}`,
+        role,
+        user: {
+          id: `usr-${Date.now().toString(36)}`,
+          name,
+          phone,
+          district,
+          unit,
+          role
+        }
+      };
+    }
+
+    if (result && result.token && typeof window !== 'undefined') {
+      sessionStorage.setItem('neshield_auth_token', result.token);
+      localStorage.setItem('neshield_auth_token', result.token);
+      localStorage.setItem('ne_citizen_name', name);
+      localStorage.setItem('ne_citizen_phone', phone);
+      localStorage.setItem('ne_citizen_district', district);
+      localStorage.setItem('ne_user_role', role);
+    }
+
+    // Direct Supabase sync: ensures user is discoverable in rosters and cross-device lookups
+    if (supabase) {
+      try {
+        const { data: existing } = await supabase.from('users').select('*').eq('name', name).eq('role', role);
+        if (!existing || existing.length === 0) {
+          await supabase.from('users').insert([{
+            name,
+            phone,
+            district,
+            unit,
+            role,
+            created_at: new Date().toISOString()
+          }]);
+        }
+      } catch (sbErr) {
+        console.warn("Supabase user sync note:", sbErr);
+      }
+    }
+
+    return result;
+  },
+
+  async getUsers(role = null) {
+    if (supabase) {
+      try {
+        let query = supabase.from('users').select('*').order('created_at', { ascending: false });
+        if (role) {
+          if (role === 'field_officer' || role === 'officer') {
+            query = query.in('role', ['field_officer', 'officer']);
+          } else {
+            query = query.eq('role', role);
+          }
+        }
+        const { data, error } = await query;
+        if (!error && data && data.length > 0) return { success: true, data };
+      } catch (e) {}
+    }
+    try {
+      const url = role ? `${BASE_URL}/api/auth/users?role=${role}` : `${BASE_URL}/api/auth/users`;
+      const res = await fetch(url);
+      if (res.ok) return await res.json();
+    } catch (e) {}
+    return { success: true, data: [] };
   },
 
   // 1. District Risks (Dual-Mode: Backend -> Supabase -> Bundled Defaults)
@@ -496,53 +579,141 @@ export const mobileApi = {
   },
 
   async assignIncident(incidentId, payload) {
-    const res = await fetch(`${BASE_URL}/api/incidents/${incidentId}/assign`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeader()
-      },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) throw new Error('Failed to assign field officer');
-    return res.json();
+    let backendOk = false;
+    try {
+      const res = await fetch(`${BASE_URL}/api/incidents/${incidentId}/assign`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) backendOk = true;
+    } catch (e) {
+      console.warn('Backend assign error, falling back to Supabase:', e);
+    }
+
+    if (supabase) {
+      try {
+        const { error } = await supabase.from('incidents').update({
+          assigned_officer: payload.officer_name,
+          officer_unit: payload.officer_unit || 'SDRF',
+          dispatched_personnel: payload.dispatched_personnel || 4,
+          status: 'assigned',
+          assigned_at: new Date().toISOString()
+        }).eq('id', incidentId);
+        if (!error) return { success: true };
+      } catch (sbErr) {
+        console.warn('Supabase assign fallback error:', sbErr);
+        if (!backendOk) throw sbErr;
+      }
+    }
+
+    if (!backendOk) throw new Error('Failed to assign field officer');
+    return { success: true };
   },
 
   async resolveIncident(incidentId, payload) {
-    const res = await fetch(`${BASE_URL}/api/incidents/${incidentId}/resolve`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeader()
-      },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) throw new Error('Failed to resolve incident');
-    return res.json();
+    let backendOk = false;
+    try {
+      const res = await fetch(`${BASE_URL}/api/incidents/${incidentId}/resolve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) backendOk = true;
+    } catch (e) {
+      console.warn('Backend resolve error, falling back to Supabase:', e);
+    }
+
+    if (supabase) {
+      try {
+        const { error } = await supabase.from('incidents').update({
+          status: 'resolved',
+          resolved_by: payload.resolved_by || payload.officer_name || 'Field Officer',
+          resolution_notes: payload.resolution_notes || payload.resolution_summary || 'Resolved and cleared',
+          resolution_summary: payload.resolution_summary || payload.resolution_notes || 'Resolved and cleared',
+          road_cleared: payload.road_cleared ?? true,
+          people_evacuated: payload.people_evacuated || 0,
+          resolved_at: new Date().toISOString()
+        }).eq('id', incidentId);
+        if (!error) return { success: true };
+      } catch (sbErr) {
+        console.warn('Supabase resolve fallback error:', sbErr);
+        if (!backendOk) throw sbErr;
+      }
+    }
+
+    if (!backendOk) throw new Error('Failed to resolve incident');
+    return { success: true };
   },
 
   async deleteIncident(incidentId) {
-    const res = await fetch(`${BASE_URL}/api/incidents/${incidentId}`, {
-      method: 'DELETE',
-      headers: {
-        ...getAuthHeader()
+    let backendOk = false;
+    try {
+      const res = await fetch(`${BASE_URL}/api/incidents/${incidentId}`, {
+        method: 'DELETE',
+        headers: {
+          ...getAuthHeader()
+        }
+      });
+      if (res.ok) backendOk = true;
+    } catch (e) {}
+
+    if (supabase) {
+      try {
+        const { error } = await supabase.from('incidents').delete().eq('id', incidentId);
+        if (!error) return { success: true };
+      } catch (sbErr) {
+        if (!backendOk) throw sbErr;
       }
-    });
-    if (!res.ok) throw new Error('Failed to delete incident');
-    return res.json();
+    }
+
+    if (!backendOk) throw new Error('Failed to delete incident');
+    return { success: true };
   },
 
   async adminCreateIncident(payload) {
-    const res = await fetch(`${BASE_URL}/api/incidents/admin/create`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...getAuthHeader()
-      },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) throw new Error('Failed to create admin incident');
-    return res.json();
+    let backendOk = false;
+    try {
+      const res = await fetch(`${BASE_URL}/api/incidents/admin/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeader()
+        },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) return await res.json();
+    } catch (e) {}
+
+    if (supabase) {
+      try {
+        const newRecord = {
+          description: payload.description,
+          latitude: Number(payload.latitude) || 25.5788,
+          longitude: Number(payload.longitude) || 91.8933,
+          severity: payload.severity || 'High',
+          status: payload.assigned_officer ? 'assigned' : 'open',
+          assigned_officer: payload.assigned_officer || null,
+          officer_unit: payload.officer_unit || null,
+          dispatched_personnel: payload.dispatched_personnel || 0,
+          submitted_by: 'SEOC HQ Administrator',
+          reporter_role: 'admin',
+          verified: true,
+          verification_status: 'verified',
+          created_at: new Date().toISOString()
+        };
+        const { data, error } = await supabase.from('incidents').insert([newRecord]).select();
+        if (!error && data) return { success: true, data: data[0] };
+      } catch (sbErr) {}
+    }
+
+    throw new Error('Failed to create admin incident');
   },
 
   // 5. Road Status Corridors

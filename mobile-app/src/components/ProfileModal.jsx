@@ -13,6 +13,18 @@ export default function ProfileModal({ onClose, isOnline }) {
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
+  const handleRoleChange = (newRole) => {
+    setRole(newRole);
+    setErrorMsg('');
+    if (newRole === 'field_officer' && (name === 'Field Citizen' || !name.trim())) {
+      setName('Insp. K. Sangma');
+    } else if (newRole === 'admin' && (name === 'Field Citizen' || !name.trim())) {
+      setName('SEOC Commander');
+    } else if (newRole === 'citizen' && (name === 'Insp. K. Sangma' || name === 'SEOC Commander')) {
+      setName('Field Citizen');
+    }
+  };
+
   const handleSave = async (e) => {
     e.preventDefault();
     setErrorMsg('');
@@ -49,6 +61,7 @@ export default function ProfileModal({ onClose, isOnline }) {
     localStorage.setItem('ne_shield_auth_token', token);
 
     localStorage.setItem('ne_citizen_name', name.trim());
+    localStorage.setItem('ne_officer_name', name.trim());
     localStorage.setItem('ne_ice_phone', icePhone.trim());
     localStorage.setItem('ne_user_district', district.trim());
     localStorage.setItem('neshield_user_role', role);
@@ -138,10 +151,7 @@ export default function ProfileModal({ onClose, isOnline }) {
             </label>
             <select
               value={role}
-              onChange={(e) => {
-                setRole(e.target.value);
-                setErrorMsg('');
-              }}
+              onChange={(e) => handleRoleChange(e.target.value)}
               style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid #cbd5e1', fontSize: '12px', background: 'white', fontWeight: 'bold' }}
             >
               <option value="citizen">👤 Citizen (Report & Evacuate)</option>

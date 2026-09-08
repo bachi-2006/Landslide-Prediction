@@ -89,7 +89,9 @@ const AlertsEngine = ({ geoJsonData, onClose, lang = 'en' }) => {
         setIsDispatching(true);
         setDispatchResult(null);
 
-        const districtObj = districts.find(d => d.id === targetDistrict) || districts[0];
+        const districtObj = (districts && districts.length > 0)
+            ? (districts.find(d => d.id === targetDistrict) || districts[0])
+            : { id: targetDistrict || 'IN-AS-01', name: 'Regional District' };
 
         try {
             const phoneList = customPhones.split(',').map(p => p.trim()).filter(Boolean);

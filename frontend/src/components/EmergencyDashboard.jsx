@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ShieldAlert, PhoneCall, AlertTriangle, ChevronRight, X, Radio, Users, CheckCircle, Clock, ShieldCheck, UserCheck, Trash2, Plus, Search } from 'lucide-react';
+import { ShieldAlert, PhoneCall, AlertTriangle, ChevronRight, X, Radio, Users, CheckCircle, Clock, ShieldCheck, UserCheck, Trash2, Plus, Search, Navigation } from 'lucide-react';
 import { getTranslation } from '../services/i18n';
-import { alertService, incidentService } from '../services/api';
+import { alertService, incidentService, userService } from '../services/api';
+import { supabase } from '../services/supabase';
 import { ROLES, rbac } from '../services/rbac';
 
-// Predefined officer roster for admin assignment search
+// Predefined officer roster for admin assignment search fallback
 const OFFICER_ROSTER = [
     { name: 'Inspector H. Lyngdoh', unit: 'SDRF Patrol Alpha' },
     { name: 'Captain K. Roy', unit: 'SDRF Quick Response' },
@@ -16,7 +17,7 @@ const OFFICER_ROSTER = [
     { name: 'ASI D. Marak', unit: 'West Garo Hills Unit' },
 ];
 
-const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lang, activeRole = 'citizen', onIncidentUpdated }) => {
+const EmergencyDashboard = ({ risks = [], geoJsonData, onSelectDistrict, onClose, lang, activeRole = 'citizen', onIncidentUpdated, onLocateLocation }) => {
     const t = (key) => getTranslation(lang, key);
     const [activeTab, setActiveTab] = useState('districts'); // 'districts' | 'incidents'
     const [selectedLevel, setSelectedLevel] = useState('All');
@@ -26,6 +27,11 @@ const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lan
     const [incidentsLoading, setIncidentsLoading] = useState(false);
     const [actionMsg, setActionMsg] = useState(null);
     const [actionMsgType, setActionMsgType] = useState('info'); // 'info' | 'error' | 'success'
+
+    // Dynamic Officer Roster loaded from Supabase users
+    const [officerRoster, setOfficerRoster] = useState(OFFICER_ROSTER);
+    // Member / Officer search query for filtering incidents and inspections
+    const [memberSearchQuery, setMemberSearchQuery] = useState('');
 
     // Officer search state per incident
     const [officerSearch, setOfficerSearch] = useState({}); // { [incidentId]: searchText }
@@ -131,19 +137,71 @@ const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lan
         }
     };
 
+    const loadOfficers = async () => {
+        try {
+            const officers = await userService.getOfficers();
+            if (Array.isArray(officers) && officers.length > 0) {
+                const names = new Set(officers.map(o => (o.name || '').toLowerCase()));
+                const combined = [
+                    ...officers.map(o => ({ name: o.name, unit: o.unit || 'Field Unit' })),
+                    ...OFFICER_ROSTER.filter(o => !names.has(o.name.toLowerCase()))
+                ];
+                setOfficerRoster(combined);
+            }
+        } catch (e) {
+            console.warn('Failed to load dynamic officers:', e);
+        }
+    };
+
     useEffect(() => {
         loadIncidents();
         loadBeaconData();
+        loadOfficers();
+
+        if (supabase) {
+            const channel = supabase
+                .channel('dashboard-realtime-sync')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, () => {
+                    loadIncidents();
+                    if (onIncidentUpdated) onIncidentUpdated();
+                })
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => {
+                    loadOfficers();
+                })
+                .subscribe();
+
+            return () => {
+                supabase.removeChannel(channel);
+            };
+        }
     }, []);
 
-    // Filtered incidents based on role
+    // Filtered incidents based on role, reporter type, and member search
+    const officerIncidentsCount = incidents.filter(inc => inc.reporter_role === 'field_officer' || (inc.submitted_by && (inc.submitted_by.toLowerCase().includes('officer') || inc.submitted_by.toLowerCase().includes('hq admin')))).length;
+    const citizenIncidentsCount = incidents.filter(inc => inc.reporter_role === 'citizen' && !((inc.submitted_by && (inc.submitted_by.toLowerCase().includes('officer') || inc.submitted_by.toLowerCase().includes('hq admin'))))).length;
+
     const filteredIncidents = (() => {
+        let list = incidents;
         if (filterMyOnly && viewAssignedOnly && myOfficerName) {
-            return incidents.filter(inc =>
+            list = list.filter(inc =>
                 inc.assigned_officer && inc.assigned_officer.toLowerCase().includes(myOfficerName.toLowerCase())
             );
         }
-        return incidents;
+        if (incidentReporterFilter === 'officer') {
+            list = list.filter(inc => inc.reporter_role === 'field_officer' || (inc.submitted_by && (inc.submitted_by.toLowerCase().includes('officer') || inc.submitted_by.toLowerCase().includes('hq admin'))));
+        } else if (incidentReporterFilter === 'citizen') {
+            list = list.filter(inc => inc.reporter_role === 'citizen' && !((inc.submitted_by && (inc.submitted_by.toLowerCase().includes('officer') || inc.submitted_by.toLowerCase().includes('hq admin')))));
+        }
+        if (memberSearchQuery.trim()) {
+            const q = memberSearchQuery.toLowerCase();
+            list = list.filter(inc =>
+                (inc.assigned_officer && inc.assigned_officer.toLowerCase().includes(q)) ||
+                (inc.submitted_by && inc.submitted_by.toLowerCase().includes(q)) ||
+                (inc.description && inc.description.toLowerCase().includes(q)) ||
+                (inc.officer_unit && inc.officer_unit.toLowerCase().includes(q))
+            );
+        }
+        return list;
     })();
 
     const handleAssignOfficer = async (incidentId) => {
@@ -238,7 +296,7 @@ const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lan
     const districtList = (geoJsonData?.features || []).map(f => {
         const id = f.properties.id;
         const name = f.properties.name || f.properties.district_name || 'District';
-        const riskEntry = risks.find(r => r.district_id === id);
+        const riskEntry = (risks || []).find(r => r.district_id === id);
         return {
             id, name, state: f.properties.state || 'NER',
             risk_level: riskEntry?.risk_level || 'Low',
@@ -277,7 +335,7 @@ const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lan
 
     // Officer search dropdown helpers
     const filteredOfficers = (search) =>
-        OFFICER_ROSTER.filter(o => o.name.toLowerCase().includes((search || '').toLowerCase()));
+        officerRoster.filter(o => (o.name || '').toLowerCase().includes((search || '').toLowerCase()));
 
     return (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[1100] p-4">
@@ -435,6 +493,21 @@ const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lan
                                 </button>
                             </div>
 
+                            {/* Search Member / Officer Name Input */}
+                            <div className="relative flex-1 min-w-[180px] max-w-xs">
+                                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input
+                                    type="text"
+                                    placeholder="Search officer or member..."
+                                    value={memberSearchQuery}
+                                    onChange={(e) => setMemberSearchQuery(e.target.value)}
+                                    className="w-full pl-8 pr-6 py-1 text-xs bg-white border border-slate-300 rounded-lg outline-none focus:border-blue-500 shadow-sm"
+                                />
+                                {memberSearchQuery && (
+                                    <button onClick={() => setMemberSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 font-bold">✕</button>
+                                )}
+                            </div>
+
                             <span className="text-xs text-slate-500 ml-auto">
                                 {filteredIncidents.length} incident{filteredIncidents.length !== 1 ? 's' : ''} shown
                             </span>
@@ -526,13 +599,33 @@ const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lan
                                             </div>
                                         )}
 
-                                        {/* Assigned officer status */}
-                                        {inc.assigned_officer && (
-                                            <div className="mb-3 p-2 bg-blue-50/80 border border-blue-200 rounded-lg flex items-center justify-between text-xs">
+                                        {/* Assigned officer status & Locate on Map */}
+                                        <div className="mb-3 p-2 bg-blue-50/80 border border-blue-200 rounded-lg flex items-center justify-between text-xs flex-wrap gap-2">
+                                            {inc.assigned_officer ? (
                                                 <span className="text-blue-900 font-medium">👮 Officer: <strong>{inc.assigned_officer}</strong></span>
-                                                <span className="text-[11px] text-blue-600 bg-white px-2 py-0.5 rounded font-mono border border-blue-200">Patrol Active</span>
+                                            ) : (
+                                                <span className="text-slate-500 font-medium">⚠️ Unassigned Field Incident</span>
+                                            )}
+                                            <div className="flex items-center gap-2 ml-auto">
+                                                {inc.assigned_officer && (
+                                                    <span className="text-[11px] text-blue-600 bg-white px-2 py-0.5 rounded font-mono border border-blue-200">Patrol Active</span>
+                                                )}
+                                                {onLocateLocation && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            onLocateLocation(Number(inc.latitude), Number(inc.longitude), 15);
+                                                            onClose();
+                                                        }}
+                                                        className="px-2.5 py-1 bg-white hover:bg-blue-600 text-blue-700 hover:text-white border border-blue-300 rounded-md text-[11px] font-bold flex items-center gap-1 transition shadow-xs cursor-pointer"
+                                                        title="Locate officer / hazard inspection on live GIS map"
+                                                    >
+                                                        <Navigation size={11} />
+                                                        <span>Locate on Map</span>
+                                                    </button>
+                                                )}
                                             </div>
-                                        )}
+                                        </div>
 
                                         {/* ── RBAC Action Row ── */}
                                         <div className="pt-2 border-t border-slate-100 space-y-2">
@@ -552,7 +645,7 @@ const EmergencyDashboard = ({ risks, geoJsonData, onSelectDistrict, onClose, lan
                                                                         setOfficerSearch({ ...officerSearch, [inc.id]: e.target.value });
                                                                         setShowOfficerDropdown({ ...showOfficerDropdown, [inc.id]: true });
                                                                         // Auto-fill unit if officer matched
-                                                                        const matched = OFFICER_ROSTER.find(o => o.name.toLowerCase() === e.target.value.toLowerCase());
+                                                                        const matched = officerRoster.find(o => (o.name || '').toLowerCase() === e.target.value.toLowerCase());
                                                                         if (matched) setOfficerUnit({ ...officerUnit, [inc.id]: matched.unit });
                                                                     }}
                                                                     onFocus={() => setShowOfficerDropdown({ ...showOfficerDropdown, [inc.id]: true })}

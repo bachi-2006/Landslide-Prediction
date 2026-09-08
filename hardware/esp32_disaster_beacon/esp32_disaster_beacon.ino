@@ -1,20 +1,3 @@
-/*
- * =====================================================================================
- *  NE-SHIELD: ESP32 Disaster Node (Lightweight LED Status Node)
- *  Smart India Hackathon (SIH) 2026
- *
- *  HARDWARE PIN CONFIGURATION (No Sirens, No Extra Peripherals):
- *    - GPIO 2 : LED_NET_PIN    (Network Status: Solid ON = Connected, Fast Blink = Connecting)
- *    - GPIO 4 : LED_DB_PIN     (DB Link Status: Solid ON = Connected to DB/Supabase)
- *    - GPIO 5 : LED_ALERT_PIN  (Incident Alert LED: Flashes pattern based on incident type)
- *
- *  ALERT BLINK CADENCE ON GPIO 5:
- *    - Disaster / Landslide / Blockage: Rapid Strobe (100ms ON / 100ms OFF)
- *    - Injury / Medical / Trauma: Pulse Warning (300ms ON / 300ms OFF)
- *    - General Incident / Report: Steady Double-Flash
- * =====================================================================================
- */
-
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -41,9 +24,23 @@ const char* ap_ssid      = "NE-SHIELD-EMERGENCY";
 const char* ap_password  = "";                      // Open / No password
 const char* node_id      = "ESP32-OFFGRID-01";
 
-// [CENTRAL CLOUD BACKEND ENDPOINTS]
+// [CENTRAL CLOUD BACKEND]
+// Render service: https://ne-shield-api.onrender.com
+// Keep /api in the route URLs below. The FastAPI routers are mounted under /api.
+const char* backend_base_url       = "https://ne-shield-api.onrender.com";
+
+// GET  /api/alert/hardware/status
+// Returns latest_incident_id, latest_incident_message, database_connected, and web_access.
 const char* backend_status_url    = "https://ne-shield-api.onrender.com/api/alert/hardware/status";
+
+// POST /api/alert/hardware/beacon/heartbeat
+// JSON: beacon_id, siren_active, wifi_ssid, sta_ip, db_connected,
+//       clients_connected, last_incident_seen.
 const char* backend_heartbeat_url = "https://ne-shield-api.onrender.com/api/alert/hardware/beacon/heartbeat";
+
+// POST /api/alert/hardware/beacon/sos
+// JSON: beacon_id, citizen_name, phone, people_count, medical_needs,
+//       notes, ip_address.
 const char* backend_sos_url       = "https://ne-shield-api.onrender.com/api/alert/hardware/beacon/sos";
 
 const byte DNS_PORT = 53;

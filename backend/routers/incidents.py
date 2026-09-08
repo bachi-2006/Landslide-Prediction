@@ -196,7 +196,8 @@ async def assign_incident(
     """Admin assigns a field officer to an incident. Writes to Supabase."""
     admin_callsign = getattr(caller, 'name', 'SEOC Admin')
     update_data = {
-        "assigned_officer": f"{req.officer_name} ({req.officer_unit})",
+        "assigned_officer": req.officer_name,
+        "officer_unit": req.officer_unit or "SDRF",
         "assigned_by": admin_callsign,
         "status": "assigned",
         "dispatched_personnel": req.dispatched_personnel,
@@ -378,9 +379,9 @@ async def admin_create_incident(
         "verification_status": "admin_verified",
         "severity": req.severity or "High",
         "status": "in_progress" if req.assigned_officer else "open",
-        "assigned_officer": f"{req.assigned_officer} ({req.officer_unit})" if req.assigned_officer and req.officer_unit else req.assigned_officer,
+        "assigned_officer": req.assigned_officer,
         "assigned_by": admin_name,
-        "officer_unit": req.officer_unit,
+        "officer_unit": req.officer_unit or "SDRF",
         "dispatched_personnel": req.dispatched_personnel or 4,
         "people_responded": req.dispatched_personnel or 0,
         "people_evacuated": 0,

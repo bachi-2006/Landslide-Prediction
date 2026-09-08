@@ -89,8 +89,10 @@ const DisasterSimulator = ({ geoJsonData, onSimulationComplete, onClose, lang = 
         setSimulationResult(null);
         setLoaderStep(1); // Satellite Ingestion
 
-        const districtObj = districts.find(d => d.id === selectedDistrictId) || districts[0];
-        const feat = geoJsonData?.features?.find(f => f.properties.id === districtObj.id);
+        const districtObj = (districts && districts.length > 0)
+            ? (districts.find(d => d.id === selectedDistrictId) || districts[0])
+            : { id: selectedDistrictId || 'IN-AS-01', name: 'Regional District' };
+        const feat = geoJsonData?.features?.find(f => f?.properties?.id === districtObj?.id);
         const geom = feat?.geometry;
         let lat = 26.0, lon = 92.0;
         if (geom?.type === 'Polygon' && geom.coordinates[0]?.length) {

@@ -122,7 +122,18 @@ const RouteViewport = ({ route }) => {
     return null;
 };
 
-const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded, activeRole = 'citizen' }) => {
+const LocationViewport = ({ targetLocation }) => {
+    const map = useMap();
+
+    useEffect(() => {
+        if (!targetLocation?.lat || !targetLocation?.lon) return;
+        map.flyTo([Number(targetLocation.lat), Number(targetLocation.lon)], targetLocation.zoom || 15, { duration: 1.5 });
+    }, [map, targetLocation]);
+
+    return null;
+};
+
+const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded, activeRole = 'citizen', targetLocation }) => {
     const [geoJsonData, setGeoJsonData] = useState(null);
     const [historicalLandslides, setHistoricalLandslides] = useState(null);
     const [risks, setRisks] = useState([]);
@@ -304,6 +315,7 @@ const RiskMap = ({ setSelectedDistrict, route, refreshKey, onDataLoaded, activeR
                     />
                 )}
                 <RouteViewport route={route} />
+                <LocationViewport targetLocation={targetLocation} />
 
                 {showHistorical && historicalLandslides && (
                     <GeoJSON

@@ -54,7 +54,9 @@ const PointAnalyticsModal = ({ pointData, onClose, onNavigateRoute }) => {
         setTimeout(() => setHardwareTriggered(false), 4000);
     };
 
-    const riskScore = analytics ? Math.round(analytics.risk_percentage) : 75;
+    const riskScore = analytics
+        ? Math.round(analytics.risk_percentage ?? (analytics.risk_score != null ? (analytics.risk_score <= 1 ? analytics.risk_score * 100 : analytics.risk_score) : 75))
+        : 75;
     const riskLevel = analytics?.risk_level || (riskScore > 75 ? 'Critical' : riskScore > 50 ? 'High' : 'Moderate');
     const telemetry = analytics?.telemetry;
 

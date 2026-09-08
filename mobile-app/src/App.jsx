@@ -59,13 +59,16 @@ const defaultDistricts = BUNDLED_NER_DISTRICTS.map(d => ({
 
 const defaultAlerts = BUNDLED_INCIDENTS.map((inc, i) => ({
   id: inc.id || String(i),
-  type: 'Citizen Hazard',
-  title: inc.description.slice(0, 32),
+  type: inc.status === 'assigned' || inc.status === 'in_progress' ? 'Assigned Field Mission' : 'Citizen Hazard',
+  title: inc.description.slice(0, 36),
   text: `${inc.description} · ${inc.submitted_by || 'Field Reporter'}`,
-  time: 'Verified',
-  color: 'red',
+  time: 'Active',
+  color: inc.severity === 'Critical' || inc.severity === 'High' ? 'red' : 'amber',
   latitude: inc.latitude,
-  longitude: inc.longitude
+  longitude: inc.longitude,
+  assigned_officer: inc.assigned_officer,
+  officer_unit: inc.officer_unit,
+  status: inc.status
 }));
 
 function App() {
@@ -85,6 +88,7 @@ function App() {
   });
   const [inspectingDistrict, setInspectingDistrict] = useState(null);
   const [activeEmergencyAlert, setActiveEmergencyAlert] = useState(null);
+  const [reportInitialCoords, setReportInitialCoords] = useState(null);
 
   // Live Database States (Pre-populated with rich bundled data so app is never blank)
   const [districts, setDistricts] = useState(defaultDistricts);
@@ -219,13 +223,16 @@ function App() {
         incRes.data.forEach((inc, i) => {
           mergedAlerts.push({
             id: inc.id || String(i),
-            type: inc.verification_status === 'verified' ? 'Verified Hazard' : 'Citizen Hazard',
+            type: inc.status === 'assigned' || inc.status === 'in_progress' ? 'Assigned Field Mission' : (inc.verification_status === 'verified' ? 'Verified Hazard' : 'Citizen Hazard'),
             title: (inc.description || 'Hazard Alert').slice(0, 36),
             text: `${inc.description || 'Hazard reported'} · ${inc.submitted_by || 'Field Reporter'}`,
             time: inc.created_at ? new Date(inc.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live',
             color: inc.severity === 'Critical' || inc.severity === 'High' ? 'red' : 'amber',
             latitude: inc.latitude,
-            longitude: inc.longitude
+            longitude: inc.longitude,
+            assigned_officer: inc.assigned_officer,
+            officer_unit: inc.officer_unit,
+            status: inc.status
           });
         });
       }
@@ -764,7 +771,10 @@ function App() {
             }}
             districts={districts}
             incidents={rawIncidents}
-            onOpenReport={() => setShowReport(true)}
+            onOpenReport={(coords) => {
+              setReportInitialCoords(coords || null);
+              setShowReport(true);
+            }}
             onSelectIncident={(inc) => setActiveOfficerIncident(inc)}
             userRole={userRole}
             onRespondIncident={async (inc) => {
@@ -803,7 +813,10 @@ function App() {
           userRole={userRole}
           sirenSounding={sirenSounding}
           onToggleSiren={handleSirenToggle}
-          onOpenReport={() => setShowReport(true)} 
+          onOpenReport={(coords) => {
+            setReportInitialCoords(coords || null);
+            setShowReport(true);
+          }} 
           onSelectIncident={(inc) => setActiveOfficerIncident(inc)}
           onRespondIncident={async (inc) => {
             const name = localStorage.getItem('ne_citizen_name') || 'Field Citizen';
@@ -826,7 +839,7 @@ function App() {
       <nav className="bottom-nav" aria-label="Main navigation">
         <NavButton active={activeTab === 'home'} label="Overview" icon={<Home size={20} />} onClick={() => setActiveTab('home')} />
         <NavButton active={activeTab === 'map'} label="Risk map" icon={<Map size={20} />} onClick={() => setActiveTab('map')} />
-        <button className="center-report" onClick={() => setShowReport(true)} aria-label="Report a hazard"><Plus size={25} /></button>
+        <button className="center-report" onClick={() => { setReportInitialCoords(null); setShowReport(true); }} aria-label="Report a hazard"><Plus size={25} /></button>
         <NavButton active={activeTab === 'routes'} label="Routes" icon={<Navigation size={20} />} onClick={() => setActiveTab('routes')} />
         <NavButton active={activeTab === 'alerts'} label="Alerts" icon={<Bell size={20} />} onClick={() => setActiveTab('alerts')} />
       </nav>
@@ -872,7 +885,14 @@ function App() {
       )}
 
       {showReport && (
-        <ReportSheet onClose={() => setShowReport(false)} onSubmit={submitReport} />
+        <ReportSheet 
+          onClose={() => {
+            setShowReport(false);
+            setReportInitialCoords(null);
+          }} 
+          onSubmit={submitReport} 
+          initialCoords={reportInitialCoords}
+        />
       )}
 
       {reportToast && (
@@ -1020,34 +1040,43 @@ function RoutesView({ roadCorridors = [], onRefresh, onOpenEvacuation, onOpenOff
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {roadCorridors.length > 0 ? (
-          roadCorridors.map((c) => (
-            <div 
-              key={c.corridor_id} 
-              style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '14px' }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <strong style={{ fontSize: '13px', color: '#0f172a' }}>{c.corridor_name}</strong>
-                <span style={{ 
-                  fontSize: '10px', 
-                  fontWeight: 'bold', 
-                  padding: '3px 8px', 
-                  borderRadius: '6px', 
-                  background: c.passable ? '#dcfce7' : '#fee2e2', 
-                  color: c.passable ? '#15803d' : '#b91c1c' 
-                }}>
-                  {c.status}
-                </span>
+          roadCorridors.map((c, idx) => {
+            const corridorId = c.corridor_id || c.id || `corridor-${idx}`;
+            const corridorName = c.corridor_name || c.name || 'NER Relief Highway';
+            const isPassable = c.passable !== undefined ? c.passable : (c.status === 'Clear' || (c.passability && c.passability >= 70));
+            const statusText = c.status || (isPassable ? 'Clear' : 'Caution');
+            const speedInfo = c.recommended_speed_kmh ? `${c.recommended_speed_kmh} km/h` : (c.passability ? `${c.passability}% Passability` : 'Standard Speed');
+            const districtText = c.district || 'Meghalaya Corridor';
+
+            return (
+              <div 
+                key={corridorId} 
+                style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '14px' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <strong style={{ fontSize: '13px', color: '#0f172a' }}>{corridorName}</strong>
+                  <span style={{ 
+                    fontSize: '10px', 
+                    fontWeight: 'bold', 
+                    padding: '3px 8px', 
+                    borderRadius: '6px', 
+                    background: isPassable ? '#dcfce7' : '#fee2e2', 
+                    color: isPassable ? '#15803d' : '#b91c1c' 
+                  }}>
+                    {statusText}
+                  </span>
+                </div>
+                <p style={{ margin: '0 0 8px', fontSize: '11px', color: '#64748b' }}>
+                  District: {districtText} · {speedInfo}
+                </p>
+                {c.diversion && (
+                  <span style={{ fontSize: '10px', color: '#b45309', display: 'block', fontWeight: 'bold' }}>
+                    ⚠️ {c.diversion}
+                  </span>
+                )}
               </div>
-              <p style={{ margin: '0 0 8px', fontSize: '11px', color: '#64748b' }}>
-                District: {c.district} · Speed limit: {c.recommended_speed_kmh} km/h
-              </p>
-              {c.diversion && (
-                <span style={{ fontSize: '10px', color: '#b45309', display: 'block', fontWeight: 'bold' }}>
-                  ⚠️ {c.diversion}
-                </span>
-              )}
-            </div>
-          ))
+            );
+          })
         ) : (
           <div className="route-card">
             <div className="route-card-top"><span className="muted">ALTERNATE</span><span>39 km</span></div>
@@ -1078,14 +1107,32 @@ function AlertsView({
   onSelectIncident, 
   onRespondIncident 
 }) {
-  const currentOfficerName = typeof window !== 'undefined' ? localStorage.getItem('ne_citizen_name') || '' : '';
-  const [assignedOnly, setAssignedOnly] = useState(userRole === 'field_officer');
+  const currentOfficerName = typeof window !== 'undefined' ? (localStorage.getItem('ne_officer_name') || localStorage.getItem('ne_citizen_name') || '') : '';
+  
+  // Smart match helper for field officers across formats
+  const officerMatches = (assignedStr) => {
+    if (!assignedStr) return false;
+    if (!currentOfficerName || currentOfficerName.trim() === '' || currentOfficerName === 'Field Citizen') {
+      return true; // Match all missions if officer name isn't customized yet
+    }
+    const aLower = assignedStr.toLowerCase();
+    const myLower = currentOfficerName.toLowerCase().trim();
+    if (aLower.includes(myLower) || myLower.includes(aLower)) return true;
+    const tokens = myLower.split(/[\s,.-]+/).filter(t => t.length >= 3);
+    return tokens.some(t => aLower.includes(t));
+  };
+
+  const myAssignedIncidents = rawIncidents.filter(inc => 
+    inc.status !== 'resolved' && officerMatches(inc.assigned_officer)
+  );
+
+  const [assignedOnly, setAssignedOnly] = useState(false);
 
   // Filter alerts if assignedOnly is active for field officers
   const displayedAlerts = alerts.filter(alert => {
-    if (userRole === 'field_officer' && assignedOnly && currentOfficerName) {
+    if (userRole === 'field_officer' && assignedOnly) {
       const matched = rawIncidents.find(i => i.id === alert.id);
-      return matched?.assigned_officer && matched.assigned_officer.toLowerCase().includes(currentOfficerName.toLowerCase());
+      return matched && officerMatches(matched.assigned_officer);
     }
     return true;
   });
@@ -1250,16 +1297,123 @@ function AlertsView({
         </div>
       </section>
 
+      {/* Field Officer: Dedicated Active Dispatch Queue */}
+      {userRole === 'field_officer' && myAssignedIncidents.length > 0 && !assignedOnly && (
+        <section style={{ marginBottom: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <h4 style={{ margin: 0, fontSize: '11px', fontWeight: '800', color: '#166534', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>🛡️</span> Your Assigned Field Missions ({myAssignedIncidents.length})
+            </h4>
+            <span style={{ fontSize: '10px', background: '#dcfce7', color: '#15803d', padding: '2px 8px', borderRadius: '9999px', fontWeight: 'bold' }}>
+              HQ DISPATCH
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {myAssignedIncidents.map((inc) => (
+              <article 
+                className="alert-row" 
+                key={`my-${inc.id}`}
+                style={{ 
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  alignItems: 'stretch',
+                  background: '#f0fdf4',
+                  border: '1px solid #86efac',
+                  borderRadius: '14px',
+                  padding: '12px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                  <span className="alert-icon red" style={{ background: '#fee2e2', color: '#dc2626' }}>
+                    <Siren size={17} />
+                  </span>
+                  <div style={{ flex: 1 }}>
+                    <div className="alert-meta">
+                      <span style={{ color: '#166534', fontWeight: 'bold' }}>{inc.officer_unit || '1st SDRF Rapid Response'}</span>
+                      <time style={{ color: '#047857', fontWeight: 'bold' }}>{inc.status ? inc.status.toUpperCase() : 'ASSIGNED'}</time>
+                    </div>
+                    <strong style={{ color: '#0f172a', fontSize: '13px' }}>{inc.description}</strong>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                      <span style={{ fontSize: '10px', color: '#0369a1', fontWeight: '600' }}>
+                        👮 Callsign: {inc.assigned_officer}
+                      </span>
+                      <span style={{ fontSize: '10px', color: '#64748b' }}>
+                        📍 {Number(inc.latitude).toFixed(4)}°N, {Number(inc.longitude).toFixed(4)}°E
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid #dcfce7', paddingTop: '8px', marginTop: '8px' }}>
+                  <span style={{ fontSize: '10px', color: '#166534', fontWeight: 'bold' }}>
+                    👥 {inc.people_responded || 0} Responders on site
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onSelectIncident) onSelectIncident(inc);
+                    }}
+                    style={{
+                      background: '#16a34a',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '7px 12px',
+                      fontSize: '11px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    🛡️ Triage & Mark Resolved
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Live Alerts Stream */}
-      <h4 style={{ margin: '0 0 10px', fontSize: '11px', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-        Live Community Hazard Stream ({displayedAlerts.length})
-      </h4>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+        <h4 style={{ margin: 0, fontSize: '11px', fontWeight: '800', color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Live Community Hazard Stream ({displayedAlerts.length})
+        </h4>
+        {userRole === 'field_officer' && (
+          <span style={{ fontSize: '10px', color: '#64748b' }}>
+            {assignedOnly ? 'Filtering: Assigned only' : 'All sector hazards'}
+          </span>
+        )}
+      </div>
 
       {displayedAlerts.length === 0 ? (
-        <div style={{ background: 'white', border: '1px dashed #cbd5e1', borderRadius: '12px', padding: '24px', textAlign: 'center', color: '#64748b', fontSize: '12px' }}>
-          {userRole === 'field_officer' && assignedOnly
-            ? 'No active incidents currently assigned to your callsign. Toggle "Show All" to inspect regional reports.'
-            : 'No active incident reports in this sector.'}
+        <div style={{ background: 'white', border: '1px dashed #cbd5e1', borderRadius: '14px', padding: '24px', textAlign: 'center', color: '#64748b', fontSize: '12px' }}>
+          <p style={{ margin: '0 0 10px', fontWeight: 'bold', color: '#334155' }}>
+            {userRole === 'field_officer' && assignedOnly
+              ? `No active incidents currently assigned to "${currentOfficerName || 'Officer'}".`
+              : 'No active incident reports in this sector.'}
+          </p>
+          {userRole === 'field_officer' && assignedOnly && (
+            <button
+              type="button"
+              onClick={() => setAssignedOnly(false)}
+              style={{
+                background: '#16a34a',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '8px 14px',
+                fontSize: '11px',
+                fontWeight: 'bold',
+                cursor: 'pointer'
+              }}
+            >
+              Show All Regional Hazard Reports
+            </button>
+          )}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1337,7 +1491,11 @@ function AlertsView({
                         cursor: 'pointer'
                       }}
                     >
-                      {userRole === 'admin' ? '🚨 Triage / Assign / Delete' : userRole === 'field_officer' ? '🛡️ Triage / Resolve' : 'ℹ️ Details'}
+                      {userRole === 'admin' 
+                        ? '🚨 Triage / Assign / Delete' 
+                        : userRole === 'field_officer' 
+                        ? (matchedInc.assigned_officer ? '🛡️ Triage / Resolve' : '🛡️ Claim / Triage') 
+                        : 'ℹ️ Details'}
                     </button>
                   </div>
                 </div>
@@ -1350,10 +1508,19 @@ function AlertsView({
   );
 }
 
-function ReportSheet({ onClose, onSubmit }) {
+function ReportSheet({ onClose, onSubmit, initialCoords = null }) {
   const [kind, setKind] = useState('Rockfall');
   const [notes, setNotes] = useState('');
-  const [coords, setCoords] = useState({ lat: 25.5788, lon: 91.8933, label: 'Shillong, Meghalaya (Default)' });
+  const [coords, setCoords] = useState(() => {
+    if (initialCoords && initialCoords.lat && initialCoords.lon) {
+      return {
+        lat: Number(initialCoords.lat),
+        lon: Number(initialCoords.lon),
+        label: initialCoords.label || `${Number(initialCoords.lat).toFixed(4)}° N, ${Number(initialCoords.lon).toFixed(4)}° E (Pinned on Map)`
+      };
+    }
+    return { lat: 25.5788, lon: 91.8933, label: 'Shillong, Meghalaya (Default)' };
+  });
   const [photo, setPhoto] = useState(null);
   const [locating, setLocating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
