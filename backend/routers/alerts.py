@@ -296,14 +296,17 @@ async def register_beacon_sos(req: BeaconSosRequest):
     """
     Called when a stranded victim connects to the ESP32 emergency Wi-Fi
     and enters their contact/family/medical details on the captive portal.
-    Persists into in-memory buffer, Supabase beacon_sos_logs, and relief_requests.
+    Persists into in-memory buffer, Supabase beacon_sos_logs, relief_requests, and incidents.
     """
     from datetime import datetime, timezone
     import time
+    import uuid
     
     saved_db = False
-    sos_id = f"BEACON-SOS-{req.beacon_id[-4:]}-{req.citizen_name[:3].upper()}"
     now_iso = datetime.now(timezone.utc).isoformat()
+    unique_suffix = f"{int(time.time())}-{uuid.uuid4().hex[:6].upper()}"
+    sos_id = f"BEACON-SOS-{unique_suffix}"
+    incident_uuid = str(uuid.uuid4())
     
     # 1. Always record in resilient in-memory buffer immediately
     memory_entry = {
@@ -322,10 +325,13 @@ async def register_beacon_sos(req: BeaconSosRequest):
     if len(IN_MEMORY_BEACON_LOGS) > 200:
         IN_MEMORY_BEACON_LOGS.pop()
 
-    # 2. Persist to Supabase
-    try:
+    # 2. Persist to Supabase (each table in its own try/except for resilience)
+    def _persist_sos():
         db = get_supabase()
-        def _persist_sos():
+        db_success = False
+
+        # A. beacon_sos_logs table
+        try:
             db.table("beacon_sos_logs").insert({
                 "beacon_id": req.beacon_id,
                 "citizen_name": req.citizen_name,
@@ -336,7 +342,12 @@ async def register_beacon_sos(req: BeaconSosRequest):
                 "ip_address": req.ip_address,
                 "synced_to_cloud": True
             }).execute()
+            db_success = True
+        except Exception as e1:
+            logger.warning(f"Failed to insert beacon_sos_logs: {e1}")
 
+        # B. relief_requests table
+        try:
             db.table("relief_requests").insert({
                 "id": sos_id,
                 "user_name": req.citizen_name,
@@ -352,10 +363,14 @@ async def register_beacon_sos(req: BeaconSosRequest):
                 "beacon_id": req.beacon_id,
                 "notes": f"Medical: {req.medical_needs}. Notes: {req.notes or 'None'}"
             }).execute()
+            db_success = True
+        except Exception as e2:
+            logger.warning(f"Failed to insert relief_requests: {e2}")
 
-            # Also persist directly into incidents table for immediate display on Dashboard, GIS Map, & Mobile App
+        # C. incidents table (requires valid UUID primary key!)
+        try:
             db.table("incidents").insert({
-                "id": f"inc-{sos_id.lower()}",
+                "id": incident_uuid,
                 "submitted_by": f"{req.citizen_name} (ESP32 Node {req.beacon_id})",
                 "description": f"Beacon SOS: {req.notes or 'Stranded victims registered at offline beacon'}. Condition: {req.medical_needs}. People: {req.people_count or 1}",
                 "latitude": 25.5788,
@@ -368,16 +383,21 @@ async def register_beacon_sos(req: BeaconSosRequest):
                 "people_evacuated": 0,
                 "created_at": now_iso
             }).execute()
+            db_success = True
+        except Exception as e3:
+            logger.warning(f"Failed to insert incidents for beacon SOS: {e3}")
 
-        await asyncio.to_thread(_persist_sos)
-        saved_db = True
+        return db_success
+
+    try:
+        saved_db = await asyncio.to_thread(_persist_sos)
     except Exception as e:
-        pass
+        logger.warning(f"Error in _persist_sos thread: {e}")
 
     try:
         from backend.routers.incidents import IN_MEMORY_INCIDENTS
         IN_MEMORY_INCIDENTS.insert(0, {
-            "id": f"inc-{sos_id.lower()}",
+            "id": incident_uuid,
             "submitted_by": f"{req.citizen_name} (ESP32 Node {req.beacon_id})",
             "description": f"Beacon SOS: {req.notes or 'Stranded victims registered at offline beacon'}. Condition: {req.medical_needs}. People: {req.people_count or 1}",
             "latitude": 25.5788,
