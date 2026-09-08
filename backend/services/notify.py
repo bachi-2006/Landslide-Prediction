@@ -117,7 +117,11 @@ async def send_sms_alert(phone_numbers: List[str], message: str) -> dict:
     Integrates with live Fast2SMS/Gov gateway when SMS_GATEWAY_API_KEY is configured,
     with honest fallback simulation logging when no API key is provided.
     """
-    sms_key = os.getenv("SMS_GATEWAY_API_KEY")
+    sms_key = (
+        os.getenv("SMS_GATEWAY_API_KEY") or 
+        os.getenv("FAST2SMS_API_KEY") or 
+        "eTYXkdws4mYFIDt4NkqURMauK7bzHyAt9SEbvTGjkRnljng9Jn21TjEu4MRO"
+    )
     clean_numbers = [num.replace("+91", "").replace("-", "").replace(" ", "").strip() for num in phone_numbers if num.strip()]
 
     if not clean_numbers:
