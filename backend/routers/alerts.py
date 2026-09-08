@@ -314,8 +314,43 @@ async def register_beacon_sos(req: BeaconSosRequest):
             "beacon_id": req.beacon_id,
             "notes": f"Medical: {req.medical_needs}. Notes: {req.notes or 'None'}"
         }).execute()
+
+        # Also persist directly into incidents table for immediate display on Dashboard, GIS Map, & Mobile App
+        db.table("incidents").insert({
+            "id": f"inc-{sos_id.lower()}",
+            "submitted_by": f"{req.citizen_name} (ESP32 Node {req.beacon_id})",
+            "description": f"Beacon SOS: {req.notes or 'Stranded victims registered at offline beacon'}. Condition: {req.medical_needs}. People: {req.people_count or 1}",
+            "latitude": 25.5788,
+            "longitude": 91.8933,
+            "severity": "Critical" if (req.medical_needs and req.medical_needs.lower() not in ["none", "safe"]) else "High",
+            "status": "open",
+            "reporter_role": "citizen",
+            "verification_status": "beacon_reported",
+            "people_responded": 0,
+            "people_evacuated": 0,
+            "created_at": now_iso
+        }).execute()
         saved_db = True
     except Exception as e:
+        pass
+
+    try:
+        from backend.routers.incidents import IN_MEMORY_INCIDENTS
+        IN_MEMORY_INCIDENTS.insert(0, {
+            "id": f"inc-{sos_id.lower()}",
+            "submitted_by": f"{req.citizen_name} (ESP32 Node {req.beacon_id})",
+            "description": f"Beacon SOS: {req.notes or 'Stranded victims registered at offline beacon'}. Condition: {req.medical_needs}. People: {req.people_count or 1}",
+            "latitude": 25.5788,
+            "longitude": 91.8933,
+            "severity": "Critical" if (req.medical_needs and req.medical_needs.lower() not in ["none", "safe"]) else "High",
+            "status": "open",
+            "reporter_role": "citizen",
+            "verification_status": "beacon_reported",
+            "people_responded": 0,
+            "people_evacuated": 0,
+            "created_at": now_iso
+        })
+    except Exception:
         pass
 
     return {

@@ -17,7 +17,7 @@
 // =====================================================================================
 // [STA MODE] Hotspot or local Wi-Fi to reach the central cloud backend
 const char* sta_ssid     = "MSI 6704";             // Hotspot / Wi-Fi SSID
-const char* sta_password = "YOUR_WIFI_PASSWORD";    // Wi-Fi Password
+const char* sta_password = "11111111";    // Wi-Fi Password
 
 // [AP MODE] Open Emergency Wi-Fi network for stranded citizens
 const char* ap_ssid      = "NE-SHIELD-EMERGENCY";
