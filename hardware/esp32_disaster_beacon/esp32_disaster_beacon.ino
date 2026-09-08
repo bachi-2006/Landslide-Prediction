@@ -1,41 +1,17 @@
 /*
  * =====================================================================================
- *  NE-SHIELD: Unified ESP32 Disaster Alert Beacon & Citizen Captive Portal Node
+ *  NE-SHIELD: ESP32 Disaster Node (Lightweight LED Status Node)
  *  Smart India Hackathon (SIH) 2026
  *
- *  HARDWARE PIN CONFIGURATION:
- *    - GPIO 4  : SIREN_PIN       (Mandatory Acoustic Siren / Relay / Active Buzzer)
- *    - GPIO 18 : LED_DB_PIN      (LED 1: Solid ON = Active Connection with DB/Backend)
- *    - GPIO 19 : LED_WIFI_PIN    (LED 2: Solid ON = Web / Wi-Fi Internet Access)
- *    - GPIO 5  : LED_ALERT_PIN   (LED 3: Rapid 5Hz Strobe for 15s on NEW INCIDENT)
- *    - GPIO 2  : ONBOARD_LED_PIN (Built-in Blue Alert LED)
- *    - GPIO 21 : I2C_SDA_PIN     (I2C OLED Display SDA - 128x64 SSD1306)
- *    - GPIO 22 : I2C_SCL_PIN     (I2C OLED Display SCL - 128x64 SSD1306)
+ *  HARDWARE PIN CONFIGURATION (No Sirens, No Extra Peripherals):
+ *    - GPIO 2 : LED_NET_PIN    (Network Status: Solid ON = Connected, Fast Blink = Connecting)
+ *    - GPIO 4 : LED_DB_PIN     (DB Link Status: Solid ON = Connected to DB/Supabase)
+ *    - GPIO 5 : LED_ALERT_PIN  (Incident Alert LED: Flashes pattern based on incident type)
  *
- *  SYSTEM CAPABILITIES & DATABASE INTEGRATION:
- *    1. DUAL WI-FI ARCHITECTURE:
- *       - AP Mode ("NE-SHIELD-EMERGENCY"): Open offline hotspot with Captive Portal DNS.
- *       - STA Mode ("MSI 6704"): Background uplink syncing directly to cloud database.
- *    2. CITIZEN CAPTIVE PORTAL (Port 80):
- *       - Auto-opens on Android, iOS, Windows, Mac.
- *       - Built-in Realistic Web Audio API Emergency Alert Siren (853Hz + 960Hz dual-tone).
- *       - Citizen registration: Name, Phone, Location, Triage Condition, People, Notes.
- *       - Dual Persistence: Saves to NVS flash memory + pushes to Supabase database.
- *    3. OFFLINE FLASH QUEUE WORKER:
- *       - If station Wi-Fi is down during submission, reports queue in flash with synced=0.
- *       - Flushes automatically to central database as soon as Wi-Fi connects.
- *    4. LOCAL REST API:
- *       - GET /api/siren?state=on|off (Direct control from mobile app / local browser)
- *       - GET /api/status (Local telemetry: IP, DB, clients, siren state)
- *       - GET /api/sos_logs (Direct JSON export of all registered victims)
- *       - GET /admin (In-browser offline officer console of all flash reports)
- *    5. I2C SSD1306 OLED DISPLAY (128x64):
- *       - Live telemetry: Node ID, STA IP, DB Link, AP clients, Siren status.
- *       - New Incident Screen: Displays animated "🚨 NEW INCIDENT!" + 15s LED strobe.
- *    6. CLOUD BACKEND & SUPABASE SYNC:
- *       - POST /api/alert/hardware/beacon/sos -> Persists to beacon_sos_logs & relief_requests
- *       - GET /api/alert/hardware/status -> Live DB connectivity ping & remote siren toggle
- *       - POST /api/alert/hardware/beacon/heartbeat -> Updates hardware_beacons registry
+ *  ALERT BLINK CADENCE ON GPIO 5:
+ *    - Disaster / Landslide / Blockage: Rapid Strobe (100ms ON / 100ms OFF)
+ *    - Injury / Medical / Trauma: Pulse Warning (300ms ON / 300ms OFF)
+ *    - General Incident / Report: Steady Double-Flash
  * =====================================================================================
  */
 
@@ -45,26 +21,13 @@
 #include <WebServer.h>
 #include <DNSServer.h>
 #include <Preferences.h>
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
 
 // =====================================================================================
-// 1. PIN CONFIGURATION
+// 1. PIN CONFIGURATION (STRICT: GPIO 2, 4, 5 ONLY)
 // =====================================================================================
-#define SIREN_PIN        4    // External Buzzer / Siren Relay (Mandatory)
-#define LED_DB_PIN       18   // LED 1: Database Connection status (Solid = Online)
-#define LED_WIFI_PIN     19   // LED 2: Web / Wi-Fi Internet status (Solid = Online)
-#define LED_ALERT_PIN    5    // LED 3: Emergency Strobe (Flashes 15s on New Incident)
-#define ONBOARD_LED_PIN  2    // Built-in Blue LED (Mirrors alert indicator)
-
-#define I2C_SDA_PIN      21   // I2C OLED SDA
-#define I2C_SCL_PIN      22   // I2C OLED SCL
-
-#define SCREEN_WIDTH     128
-#define SCREEN_HEIGHT    64
-#define OLED_RESET       -1
-#define SCREEN_ADDRESS   0x3C // Standard I2C address for SSD1306
+#define LED_NET_PIN      2    // Network indication (Solid ON when connected to Wi-Fi/Internet)
+#define LED_DB_PIN       4    // DB connection status (Solid ON when Supabase/Cloud DB connected)
+#define LED_ALERT_PIN    5    // New incident report & incident type indication LED
 
 // =====================================================================================
 // 2. NETWORK & BACKEND CONFIGURATION
@@ -74,7 +37,7 @@ const char* sta_ssid     = "MSI 6704";             // Hotspot / Wi-Fi SSID
 const char* sta_password = "YOUR_WIFI_PASSWORD";    // Wi-Fi Password
 
 // [AP MODE] Open Emergency Wi-Fi network for stranded citizens
-const char* ap_ssid      = "NE-SHIELD-EMERGENCY";   // Also works as EMERGENCY_DISASTER_PORTAL
+const char* ap_ssid      = "NE-SHIELD-EMERGENCY";
 const char* ap_password  = "";                      // Open / No password
 const char* node_id      = "ESP32-OFFGRID-01";
 
@@ -92,34 +55,39 @@ IPAddress apIP(192, 168, 4, 1);
 DNSServer dnsServer;
 WebServer server(80);
 Preferences prefs;
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-bool oledFound            = false;
-bool sirenActive          = false;
 bool webAccess            = false;
 bool dbConnected          = false;
 int  reportCount          = 0;
 
-// 15-Second Incident Blinker State
-bool isIncidentBlinking       = false;
+// Incident Alert LED (GPIO 5) State
+enum AlertType {
+  ALERT_NONE,
+  ALERT_DISASTER,   // Landslide, Rockfall, Blockage, Flood -> Rapid strobe (100ms)
+  ALERT_MEDICAL,    // Injury, Trauma, Medical, Trapped -> Medium pulse (300ms)
+  ALERT_GENERAL     // General hazard or citizen report -> Double flash
+};
+
+AlertType currentAlertType       = ALERT_NONE;
+bool isIncidentBlinking           = false;
 unsigned long incidentBlinkStartTime = 0;
-const unsigned long blinkDurationMs  = 15000;
-String lastSeenIncidentId     = "";
-String currentIncidentDesc    = "";
-String currentIncidentReporter= "";
+const unsigned long blinkDurationMs  = 20000; // Blink for 20 seconds on new incident
+String lastSeenIncidentId         = "";
+String currentIncidentDesc        = "";
+String currentIncidentReporter    = "";
 
 // Polling and Heartbeat Timers
 unsigned long lastPollTime        = 0;
 const unsigned long pollIntervalMs = 3000; // Poll cloud status every 3s
 
-unsigned long lastHeartbeatTime        = 0;
-const unsigned long heartbeatIntervalMs = 10000; // Send beacon heartbeat every 10s
+unsigned long lastHeartbeatTime   = 0;
+const unsigned long heartbeatIntervalMs = 10000; // Send heartbeat every 10s
 
-unsigned long lastSyncAttempt        = 0;
-const unsigned long syncIntervalMs    = 12000; // Background flash queue sync every 12s
+unsigned long lastSyncAttempt     = 0;
+const unsigned long syncIntervalMs = 12000; // Background flash queue sync every 12s
 
 // =====================================================================================
-// 4. CAPTIVE PORTAL HTML INTERFACE (With Realistic Web Audio API Siren & Responder Bar)
+// 4. CAPTIVE PORTAL HTML INTERFACE
 // =====================================================================================
 const char PORTAL_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <html lang="en">
@@ -157,21 +125,18 @@ const char PORTAL_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       border: 1px solid #0284c7;
     }
     .status-live {
-      background: rgba(220, 38, 38, 0.2);
-      color: #f87171;
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
       font-size: 0.75rem;
       font-weight: 700;
       padding: 4px 10px;
       border-radius: 9999px;
-      border: 1px solid #dc2626;
-      display: flex;
-      align-items: center;
-      gap: 6px;
+      border: 1px solid #10b981;
     }
     .system-alert {
       background: #111827;
       border: 1px solid #1f2937;
-      border-top: 5px solid #dc2626;
+      border-top: 5px solid #ef4444;
       border-radius: 14px;
       width: 100%;
       max-width: 440px;
@@ -186,7 +151,7 @@ const char PORTAL_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       margin-bottom: 10px;
     }
     .alert-badge {
-      background: #dc2626;
+      background: #ef4444;
       color: white;
       font-size: 0.72rem;
       font-weight: 800;
@@ -245,199 +210,130 @@ const char PORTAL_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       font-weight: 700;
       color: #94a3b8;
       text-transform: uppercase;
+      letter-spacing: 0.04em;
       margin-bottom: 4px;
       display: block;
     }
-    input, select, textarea {
+    input[type="text"], input[type="tel"], input[type="number"], select, textarea {
       width: 100%;
-      background: #1f2937;
+      background: #0b0f17;
       border: 1px solid #374151;
-      color: white;
-      padding: 10px 12px;
       border-radius: 8px;
+      padding: 10px 12px;
+      color: #f8fafc;
       font-size: 0.9rem;
       outline: none;
+      transition: border-color 0.2s;
     }
-    input:focus, select:focus, textarea:focus {
-      border-color: #38bdf8;
-    }
+    input:focus, select:focus, textarea:focus { border-color: #0284c7; }
     .btn-submit {
       width: 100%;
-      background: #dc2626;
-      border: none;
-      padding: 13px;
-      border-radius: 8px;
+      background: #0284c7;
       color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 12px;
+      font-weight: 700;
       font-size: 0.95rem;
-      font-weight: 800;
       cursor: pointer;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-top: 6px;
-    }
-    .btn-submit:active { background: #b91c1c; }
-    .responder-card {
-      border: 1px solid #374151;
-      background: #0f172a;
-      margin-top: 4px;
-    }
-    .btn-responder {
-      flex: 1;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      padding: 10px;
-      font-weight: bold;
-      font-size: 0.82rem;
-      cursor: pointer;
-    }
-    .status-indicator {
-      font-size: 0.75rem;
-      color: #64748b;
-      text-align: center;
       margin-top: 8px;
+    }
+    .btn-submit:hover { background: #0369a1; }
+    .led-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      line-height: 1.5;
+    }
+    .led-tag {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: bold;
+      color: white;
+      margin-right: 4px;
+      font-size: 0.72rem;
     }
   </style>
 </head>
 <body>
 
   <div class="badge-bar">
-    <span class="node-tag">BEACON: ESP32-OFFGRID-01</span>
-    <span class="status-live">EMERGENCY NETWORK</span>
+    <span class="node-tag">NODE: ESP32-OFFGRID-01</span>
+    <span class="status-live">PORTAL ACTIVE</span>
   </div>
 
   <div class="system-alert">
     <div class="alert-header">
-      <span class="alert-badge">National Warning</span>
-      <h2 class="alert-title">Emergency Notice</h2>
+      <span class="alert-badge">Warning</span>
+      <h2 class="alert-title">Disaster Broadcast</h2>
     </div>
     <p class="alert-body">
-      Cellular towers may be offline. You are directly connected to an autonomous disaster beacon node. Follow evacuation directives.
+      Cellular networks may be impaired. You are connected to an autonomous offline disaster beacon node. Register your location and condition below.
     </p>
     <div class="location-box">
-      <strong>DESIGNATED SAFE ROUTE:</strong> Evacuate uphill towards NH-206 Mawphlang Ridge. Avoid cutting slopes and river valleys. Relief teams active.
+      <strong>RECOMMENDED ACTION:</strong> Move away from steep slopes, rockfall zones, and flood runoffs towards elevated bedrock areas.
     </div>
-    <div style="font-size: 0.75rem; color: #94a3b8; text-align: right;">Authority: State Emergency Operations Center (SEOC)</div>
   </div>
 
   <div class="card">
-    <div class="card-title">📋 Relief Dispatch Registration</div>
-    <p class="card-subtitle">Log your details to internal flash storage. Data transmits directly to the central rescue dashboard.</p>
+    <div class="card-title">📝 Emergency Status Registration</div>
+    <div class="card-subtitle">Saved to internal non-volatile memory & synced automatically to Central Command.</div>
+
     <form action="/submit" method="POST">
       <div class="form-group">
-        <label for="name">Your Full Name or Family Name *</label>
-        <input type="text" id="name" name="name" placeholder="e.g. John Doe / Lyngdoh Family" required>
+        <label for="name">Your Name / Group Contact</label>
+        <input type="text" id="name" name="name" placeholder="Full name" required>
       </div>
 
       <div class="form-group">
-        <label for="phone">Contact Phone / ICE Number</label>
-        <input type="tel" id="phone" name="phone" placeholder="e.g. +91 98620 XXXXX">
+        <label for="phone">Contact Number / Alternate</label>
+        <input type="tel" id="phone" name="phone" placeholder="Mobile number">
       </div>
 
       <div class="form-group">
-        <label for="location">Current Landmark / GPS / Distance</label>
-        <input type="text" id="location" name="location" placeholder="e.g. Near km 14 milestone, roadside shelter" required>
+        <label for="location">Current Location / Landmark</label>
+        <input type="text" id="location" name="location" placeholder="e.g. Near Mawphlang Ridge Bridge, NH-40" required>
       </div>
 
       <div class="form-group">
-        <label for="people">Number of People with You</label>
+        <label for="people">Number of People</label>
         <input type="number" id="people" name="people_count" min="1" max="50" value="1">
       </div>
 
       <div class="form-group">
-        <label for="status">Triage Condition / Medical Need</label>
+        <label for="status">Medical / Triage Condition</label>
         <select id="status" name="status">
-          <option value="Safe">Safe - Awaiting Evacuation Transport</option>
-          <option value="Minor Injuries">Minor Injuries - First Aid Required</option>
-          <option value="Urgent Medical">Urgent: Trauma / Fracture / Insulin / Elderly</option>
-          <option value="Critical">Critical - Trapped under debris / Urgent Rescue</option>
+          <option value="Safe">Safe - Awaiting Transport</option>
+          <option value="Minor Injuries">Minor Injuries - First Aid</option>
+          <option value="Urgent Medical">Urgent Medical Attention Needed</option>
+          <option value="Critical">Critical - Trapped / Immediate Rescue</option>
         </select>
       </div>
 
       <div class="form-group">
-        <label for="notes">Specific Needs / Road Obstruction Notes</label>
-        <textarea id="notes" name="notes" rows="2" placeholder="e.g. Mudslide blocked road, family requires drinking water..."></textarea>
+        <label for="notes">Incident / Hazard Observations</label>
+        <textarea id="notes" name="notes" rows="2" placeholder="e.g. Road cracked, landslide 100m ahead..."></textarea>
       </div>
 
-      <button type="submit" class="btn-submit">LOG STATUS TO RELIEF NODE</button>
+      <button type="submit" class="btn-submit">SUBMIT REPORT TO NODE</button>
     </form>
-    <div class="status-indicator">Node ID: ESP32-OFFGRID-01 | Internal Flash & Cloud Sync Ready</div>
   </div>
 
-  <!-- Field Responder Siren Override Card -->
-  <div class="card responder-card">
-    <div class="card-title" style="font-size: 0.95rem; color: #f59e0b;">⚡ Field Officer & Responder Siren Controls</div>
-    <p style="font-size: 0.78rem; color: #94a3b8; margin-bottom: 10px;">Direct local Wi-Fi control over hardware acoustic beacon buzzer (GPIO 4).</p>
-    <div style="display: flex; gap: 8px;">
-      <button type="button" onclick="toggleLocalSiren('on')" class="btn-responder" style="background: #dc2626;">🚨 Sound Siren</button>
-      <button type="button" onclick="toggleLocalSiren('off')" class="btn-responder" style="background: #334155;">⏹️ Silence Siren</button>
-    </div>
-    <div id="sirenMsg" style="font-size: 0.78rem; color: #38bdf8; margin-top: 8px; text-align: center; font-weight: bold;"></div>
+  <!-- Hardware LED Legend Card -->
+  <div class="card led-card">
+    <strong style="color: #f8fafc;">Hardware LED Indicators:</strong><br>
+    • <span class="led-tag" style="background:#2563eb;">GPIO 2</span> <strong>Network</strong>: Solid ON = Connected to Wi-Fi / Internet.<br>
+    • <span class="led-tag" style="background:#16a34a;">GPIO 4</span> <strong>Database</strong>: Solid ON = Connected to Supabase / Backend.<br>
+    • <span class="led-tag" style="background:#dc2626;">GPIO 5</span> <strong>Incident Alert</strong>: Flashes pattern on new report.<br>
+    <span style="font-size:0.75rem; color:#cbd5e1; margin-left: 12px;">- Rapid Strobe = Landslide / Disaster / Road Block</span><br>
+    <span style="font-size:0.75rem; color:#cbd5e1; margin-left: 12px;">- Medium Pulse = Medical / Trauma / Injury</span><br>
+    <span style="font-size:0.75rem; color:#cbd5e1; margin-left: 12px;">- Double Flash = General Hazard Report</span>
   </div>
 
-  <!-- Realistic Web Audio API Siren Engine (853Hz + 960Hz EAS standard tones) -->
-  <script>
-    let audioCtx = null;
-    let isPlaying = false;
-
-    function startRealisticSiren() {
-      if (isPlaying) return;
-      try {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === 'suspended') {
-          audioCtx.resume();
-        }
-        isPlaying = true;
-        playPulse();
-      } catch (e) {
-        console.log("Audio waiting for user gesture");
-      }
-    }
-
-    function playPulse() {
-      if (!isPlaying || !audioCtx) return;
-      const now = audioCtx.currentTime;
-
-      const osc1 = audioCtx.createOscillator();
-      const osc2 = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-
-      osc1.type = 'sawtooth';
-      osc2.type = 'sawtooth';
-      osc1.frequency.setValueAtTime(853, now);
-      osc2.frequency.setValueAtTime(960, now);
-
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(audioCtx.destination);
-
-      gain.gain.setValueAtTime(0.06, now);
-
-      osc1.start(now);
-      osc2.start(now);
-      osc1.stop(now + 1.2);
-      osc2.stop(now + 1.2);
-
-      setTimeout(playPulse, 2700);
-    }
-
-    window.addEventListener('load', startRealisticSiren);
-    ['touchstart', 'mousedown', 'scroll', 'keydown'].forEach(evt => {
-      document.addEventListener(evt, startRealisticSiren, { once: true });
-    });
-
-    function toggleLocalSiren(state) {
-      document.getElementById('sirenMsg').innerText = 'Transmitting command to beacon...';
-      fetch('/api/siren?state=' + state)
-        .then(r => r.json())
-        .then(d => {
-          document.getElementById('sirenMsg').innerText = d.siren_active ? '🚨 SIREN SOUNDING (ACTIVE ALERT)' : '⏹️ SIREN SILENCED (STANDBY)';
-        })
-        .catch(e => {
-          document.getElementById('sirenMsg').innerText = 'Command dispatched to node.';
-        });
-    }
-  </script>
 </body>
 </html>)rawliteral";
 
@@ -467,132 +363,90 @@ const char SUCCESS_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 </html>)rawliteral";
 
 // =====================================================================================
-// 5. I2C DISPLAY HELPERS (SSD1306 OLED)
-// =====================================================================================
-void initDisplay() {
-  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-  if (display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    oledFound = true;
-    display.clearDisplay();
-    display.setTextColor(SSD1306_WHITE);
-    display.setTextSize(1);
-    display.setCursor(0, 0);
-    display.println("NE-SHIELD BEACON");
-    display.println("Initializing...");
-    display.display();
-    Serial.println("[I2C] SSD1306 OLED Display initialized at 0x3C");
-  } else {
-    oledFound = false;
-    Serial.println("[I2C] No OLED found at 0x3C. Headless mode active.");
-  }
-}
-
-void updateIdleDisplay() {
-  if (!oledFound) return;
-  display.clearDisplay();
-  display.setTextSize(1);
-
-  // Header
-  display.setCursor(0, 0);
-  display.print("NE-SHIELD ");
-  display.println(node_id);
-  display.drawLine(0, 9, 127, 9, SSD1306_WHITE);
-
-  // Line 1: Wi-Fi STA
-  display.setCursor(0, 13);
-  if (webAccess) {
-    display.print("STA: ");
-    display.println(WiFi.localIP().toString());
-  } else {
-    display.println("STA: Connecting...");
-  }
-
-  // Line 2: DB Connection
-  display.setCursor(0, 24);
-  display.print("DB Link: ");
-  display.println(dbConnected ? "[ONLINE]" : "[OFFLINE]");
-
-  // Line 3: AP Clients
-  display.setCursor(0, 35);
-  display.print("Victims On AP: ");
-  display.println(WiFi.softAPgetStationNum());
-
-  // Line 4: Siren Status
-  display.setCursor(0, 46);
-  if (sirenActive) {
-    display.print("SIREN: ");
-    display.println("! ACTIVE ALERT !");
-  } else {
-    display.print("SIREN: ");
-    display.println("STANDBY (OK)");
-  }
-
-  display.display();
-}
-
-void showIncidentOnDisplay(String desc, String reporter, int countdownSec) {
-  if (!oledFound) return;
-  display.clearDisplay();
-
-  // Flashing inverted header
-  display.fillRect(0, 0, 128, 12, SSD1306_WHITE);
-  display.setTextColor(SSD1306_BLACK);
-  display.setCursor(4, 2);
-  display.print("! NEW INCIDENT (");
-  display.print(countdownSec);
-  display.println("s) !");
-
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 16);
-  display.print("Reported by: ");
-  display.println(reporter.substring(0, 12));
-
-  display.setCursor(0, 28);
-  display.println(desc.substring(0, 42));
-
-  display.setCursor(0, 52);
-  display.print("BEACON STROBE ACTIVE");
-
-  display.display();
-}
-
-// =====================================================================================
-// 6. LEDS & ACTUATORS CONTROLLER
+// 5. LED STATUS & INCIDENT TYPE PATTERN CONTROLLER (GPIO 2, 4, 5)
 // =====================================================================================
 void updateStatusLEDs() {
-  // LED 1 (GPIO 18): DB Connection Status
+  // -------------------------------------------------------------
+  // GPIO 2: NETWORK STATUS
+  // Solid ON when connected to station Wi-Fi / Internet
+  // Fast 200ms blink if still connecting / searching for network
+  // -------------------------------------------------------------
+  if (webAccess) {
+    digitalWrite(LED_NET_PIN, HIGH);
+  } else {
+    // Fast blink (200ms period) when network is disconnected/connecting
+    bool netBlink = ((millis() / 200) % 2) == 0;
+    digitalWrite(LED_NET_PIN, netBlink ? HIGH : LOW);
+  }
+
+  // -------------------------------------------------------------
+  // GPIO 4: DATABASE STATUS
+  // Solid ON when live link to Supabase / Backend API is active
+  // OFF when DB is unreachable
+  // -------------------------------------------------------------
   digitalWrite(LED_DB_PIN, dbConnected ? HIGH : LOW);
 
-  // LED 2 (GPIO 19): Web / Wi-Fi Access
-  digitalWrite(LED_WIFI_PIN, webAccess ? HIGH : LOW);
-
-  // LED 3 (GPIO 5) & Onboard LED (GPIO 2): 15-second 5Hz Strobe
+  // -------------------------------------------------------------
+  // GPIO 5: INCIDENT ALERT & DISASTER / INJURY TYPE INDICATION
+  // -------------------------------------------------------------
   if (isIncidentBlinking) {
     unsigned long elapsed = millis() - incidentBlinkStartTime;
     if (elapsed < blinkDurationMs) {
-      int remainingSec = (blinkDurationMs - elapsed) / 1000 + 1;
-      bool blinkState = ((elapsed / 100) % 2) == 0; // 5Hz blink
-      digitalWrite(LED_ALERT_PIN, blinkState ? HIGH : LOW);
-      digitalWrite(ONBOARD_LED_PIN, blinkState ? HIGH : LOW);
+      bool ledState = false;
 
-      // Refresh countdown on OLED every 500ms
-      if (elapsed % 500 < 50) {
-        showIncidentOnDisplay(currentIncidentDesc, currentIncidentReporter, remainingSec);
+      switch (currentAlertType) {
+        case ALERT_DISASTER:
+          // Rapid Strobe (100ms ON / 100ms OFF = 5Hz) for Landslides, Roadblocks, Collapse
+          ledState = ((elapsed / 100) % 2) == 0;
+          break;
+
+        case ALERT_MEDICAL:
+          // Warning Pulse (300ms ON / 300ms OFF) for Injuries, Medical, Trapped victims
+          ledState = ((elapsed / 300) % 2) == 0;
+          break;
+
+        case ALERT_GENERAL:
+        default:
+          // Double-flash cadence: [ON 100ms, OFF 100ms, ON 100ms, OFF 700ms]
+          {
+            unsigned long cycle = elapsed % 1000;
+            if (cycle < 100) ledState = true;
+            else if (cycle < 200) ledState = false;
+            else if (cycle < 300) ledState = true;
+            else ledState = false;
+          }
+          break;
       }
+      digitalWrite(LED_ALERT_PIN, ledState ? HIGH : LOW);
     } else {
+      // 20-second active incident indication interval finished
       isIncidentBlinking = false;
-      digitalWrite(LED_ALERT_PIN, sirenActive ? HIGH : LOW);
-      digitalWrite(ONBOARD_LED_PIN, sirenActive ? HIGH : LOW);
-      updateIdleDisplay();
-      Serial.println("[ALERT] 15-second incident LED blink interval finished.");
+      currentAlertType = ALERT_NONE;
+      digitalWrite(LED_ALERT_PIN, LOW);
+      Serial.println("[ALERT LED] Incident blink pattern completed. Returning to idle.");
     }
   } else {
-    digitalWrite(LED_ALERT_PIN, sirenActive ? HIGH : LOW);
-    digitalWrite(ONBOARD_LED_PIN, sirenActive ? HIGH : LOW);
+    digitalWrite(LED_ALERT_PIN, LOW);
   }
+}
 
-  // Physical Acoustic Siren (GPIO 4)
-  digitalWrite(SIREN_PIN, sirenActive ? HIGH : LOW);
+// Classify incident message into ALERT_DISASTER, ALERT_MEDICAL, or ALERT_GENERAL
+AlertType classifyIncident(String text) {
+  text.toLowerCase();
+  if (text.indexOf("injur") >= 0 || text.indexOf("medical") >= 0 || 
+      text.indexOf("trapped") >= 0 || text.indexOf("casualt") >= 0 || 
+      text.indexOf("fractur") >= 0 || text.indexOf("blood") >= 0 ||
+      text.indexOf("critical") >= 0 || text.indexOf("hospital") >= 0) {
+    return ALERT_MEDICAL;
+  }
+  if (text.indexOf("landslide") >= 0 || text.indexOf("rockfall") >= 0 || 
+      text.indexOf("block") >= 0 || text.indexOf("mudslide") >= 0 || 
+      text.indexOf("flood") >= 0 || text.indexOf("collapse") >= 0 ||
+      text.indexOf("debris") >= 0 || text.indexOf("disaster") >= 0 ||
+      text.indexOf("hazard") >= 0 || text.indexOf("crack") >= 0) {
+    return ALERT_DISASTER;
+  }
+  return ALERT_GENERAL;
 }
 
 // Clean input strings to prevent broken JSON payloads
@@ -606,7 +460,7 @@ String cleanString(String s) {
 }
 
 // =====================================================================================
-// 7. BACKEND SYNC: POLL CLOUD, SEND HEARTBEAT & FORWARD SOS
+// 6. BACKEND SYNC: POLL CLOUD, SEND HEARTBEAT & FORWARD SOS
 // =====================================================================================
 void pollBackendStatus() {
   if (WiFi.status() != WL_CONNECTED) {
@@ -627,13 +481,6 @@ void pollBackendStatus() {
     if (httpCode == 200) {
       String payload = http.getString();
       dbConnected = true;
-
-      // Check siren active state
-      if (payload.indexOf("\"is_active\":true") >= 0 || payload.indexOf("\"active\":true") >= 0) {
-        sirenActive = true;
-      } else if (payload.indexOf("\"is_active\":false") >= 0 || payload.indexOf("\"active\":false") >= 0) {
-        sirenActive = false;
-      }
 
       // Check for a NEW incident reported in database
       int idIdx = payload.indexOf("\"latest_incident_id\":\"");
@@ -657,7 +504,10 @@ void pollBackendStatus() {
 
         if (incId != "" && incId != "null" && incId != lastSeenIncidentId) {
           if (lastSeenIncidentId != "") { // Skip initial boot check
-            Serial.printf("[INCIDENT] New incident detected: %s! Starting 15s alert strobe.\n", incId.c_str());
+            currentAlertType = classifyIncident(incDesc);
+            const char* typeStr = (currentAlertType == ALERT_DISASTER) ? "DISASTER/LANDSLIDE (Rapid Strobe)" : 
+                                  ((currentAlertType == ALERT_MEDICAL) ? "INJURY/MEDICAL (Warning Pulse)" : "GENERAL REPORT (Double-Flash)");
+            Serial.printf("[INCIDENT] New incident: %s! Type: %s. Starting LED 5 pattern for 20s.\n", incId.c_str(), typeStr);
             isIncidentBlinking = true;
             incidentBlinkStartTime = millis();
             currentIncidentDesc = incDesc;
@@ -690,7 +540,7 @@ void sendHeartbeat() {
 
     String body = "{";
     body += "\"beacon_id\":\"" + String(node_id) + "\",";
-    body += "\"siren_active\":" + String(sirenActive ? "true" : "false") + ",";
+    body += "\"siren_active\":false,";
     body += "\"wifi_ssid\":\"" + String(sta_ssid) + "\",";
     body += "\"sta_ip\":\"" + WiFi.localIP().toString() + "\",";
     body += "\"db_connected\":" + String(dbConnected ? "true" : "false") + ",";
@@ -764,14 +614,13 @@ void syncPendingSosLogs() {
 }
 
 // =====================================================================================
-// 8. CAPTIVE PORTAL & LOCAL REST API WEB HANDLERS
+// 7. CAPTIVE PORTAL & LOCAL REST API WEB HANDLERS
 // =====================================================================================
 void handleRoot() {
   server.send_P(200, "text/html", PORTAL_HTML);
 }
 
 void handleSubmit() {
-  // Support both "name" and "citizen_name"
   String name = server.hasArg("name") ? server.arg("name") : (server.hasArg("citizen_name") ? server.arg("citizen_name") : "Citizen");
   String phone = server.hasArg("phone") ? server.arg("phone") : "";
   String loc = server.hasArg("location") ? server.arg("location") : "Emergency Zone";
@@ -785,6 +634,11 @@ void handleSubmit() {
 
   Serial.println("[CAPTIVE] New citizen SOS submission received:");
   Serial.printf("  Name: %s | Phone: %s | Loc: %s | Condition: %s | People: %d\n", name.c_str(), phone.c_str(), loc.c_str(), stat.c_str(), people);
+
+  // Trigger GPIO 5 incident alert pattern locally when citizen submits on beacon
+  currentAlertType = classifyIncident(stat + " " + fullNotes);
+  isIncidentBlinking = true;
+  incidentBlinkStartTime = millis();
 
   // 1. Immediately forward to Central Supabase DB via Backend API
   bool synced = forwardSosToBackend(name, phone, people, stat, fullNotes, clientIp);
@@ -836,38 +690,6 @@ void handleAdmin() {
   server.send(200, "text/html", page);
 }
 
-// Direct local Wi-Fi control over hardware acoustic siren (GPIO 4)
-void handleApiSiren() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  server.sendHeader("Access-Control-Allow-Headers", "*");
-  if (server.method() == HTTP_OPTIONS) {
-    server.send(204);
-    return;
-  }
-
-  String state = server.hasArg("state") ? server.arg("state") : "";
-  state.toLowerCase();
-
-  if (state == "on" || state == "1" || state == "true" || state == "active") {
-    sirenActive = true;
-    digitalWrite(SIREN_PIN, HIGH);
-    Serial.println("[LOCAL API] Siren turned ON via local Wi-Fi command");
-  } else if (state == "off" || state == "0" || state == "false" || state == "idle") {
-    sirenActive = false;
-    digitalWrite(SIREN_PIN, LOW);
-    Serial.println("[LOCAL API] Siren turned OFF via local Wi-Fi command");
-  } else {
-    sirenActive = !sirenActive;
-    digitalWrite(SIREN_PIN, sirenActive ? HIGH : LOW);
-  }
-
-  updateIdleDisplay();
-
-  String json = "{\"status\":\"ok\",\"siren_active\":" + String(sirenActive ? "true" : "false") + ",\"node_id\":\"" + String(node_id) + "\"}";
-  server.send(200, "application/json", json);
-}
-
 // Local telemetry & diagnostic status
 void handleApiStatus() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -876,9 +698,10 @@ void handleApiStatus() {
 
   String json = "{";
   json += "\"node_id\":\"" + String(node_id) + "\",";
-  json += "\"siren_active\":" + String(sirenActive ? "true" : "false") + ",";
+  json += "\"network_connected\":" + String(webAccess ? "true" : "false") + ",";
   json += "\"db_connected\":" + String(dbConnected ? "true" : "false") + ",";
-  json += "\"web_access\":" + String(webAccess ? "true" : "false") + ",";
+  json += "\"incident_alert_active\":" + String(isIncidentBlinking ? "true" : "false") + ",";
+  json += "\"alert_type\":" + String(currentAlertType) + ",";
   json += "\"clients_connected\":" + String(WiFi.softAPgetStationNum()) + ",";
   json += "\"sta_ip\":\"" + WiFi.localIP().toString() + "\",";
   json += "\"ap_ip\":\"" + apIP.toString() + "\"";
@@ -921,36 +744,30 @@ void handleApiSosLogs() {
 }
 
 // =====================================================================================
-// 9. ARDUINO SETUP & MAIN LOOP
+// 8. ARDUINO SETUP & MAIN LOOP
 // =====================================================================================
 void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n=======================================================");
-  Serial.println("  NE-SHIELD: ESP32 DISASTER ALERT BEACON INITIALIZING  ");
+  Serial.println("   NE-SHIELD: ESP32 DISASTER LED NODE INITIALIZING     ");
+  Serial.println("   PINS CONFIGURED: GPIO 2, GPIO 4, GPIO 5 ONLY        ");
   Serial.println("=======================================================");
 
-  // Setup GPIO pins
-  pinMode(SIREN_PIN, OUTPUT);
+  // Setup GPIO pins (GPIO 2, 4, 5 only)
+  pinMode(LED_NET_PIN, OUTPUT);
   pinMode(LED_DB_PIN, OUTPUT);
-  pinMode(LED_WIFI_PIN, OUTPUT);
   pinMode(LED_ALERT_PIN, OUTPUT);
-  pinMode(ONBOARD_LED_PIN, OUTPUT);
 
-  digitalWrite(SIREN_PIN, LOW);
+  digitalWrite(LED_NET_PIN, LOW);
   digitalWrite(LED_DB_PIN, LOW);
-  digitalWrite(LED_WIFI_PIN, LOW);
   digitalWrite(LED_ALERT_PIN, LOW);
-  digitalWrite(ONBOARD_LED_PIN, LOW);
 
   // Initialize NVS Flash
   prefs.begin("sos_db", false);
   reportCount = prefs.getInt("total", 0);
   prefs.end();
   Serial.printf("[NVS] Internal flash loaded: %d stored SOS reports.\n", reportCount);
-
-  // Initialize I2C OLED display
-  initDisplay();
 
   // 1. Initialize Access Point (AP) mode for stranded victims
   WiFi.mode(WIFI_AP_STA);
@@ -968,7 +785,6 @@ void setup() {
   server.on("/submit", HTTP_POST, handleSubmit);
   server.on("/submit_sos", HTTP_POST, handleSubmit);
   server.on("/admin", HTTP_GET, handleAdmin);
-  server.on("/api/siren", HTTP_ANY, handleApiSiren);
   server.on("/api/status", HTTP_GET, handleApiStatus);
   server.on("/api/sos_logs", HTTP_GET, handleApiSosLogs);
 
@@ -986,8 +802,6 @@ void setup() {
   // 4. Connect STA Wi-Fi in background to reach cloud backend
   Serial.printf("[STA] Connecting to station Wi-Fi: '%s'...\n", sta_ssid);
   WiFi.begin(sta_ssid, sta_password);
-
-  updateIdleDisplay();
 }
 
 void loop() {
@@ -1011,9 +825,6 @@ void loop() {
   if (millis() - lastPollTime >= pollIntervalMs) {
     lastPollTime = millis();
     pollBackendStatus();
-    if (!isIncidentBlinking) {
-      updateIdleDisplay();
-    }
   }
 
   // 6. Periodic Heartbeat to register beacon with Admin Dashboard (every 10s)
@@ -1022,6 +833,6 @@ void loop() {
     sendHeartbeat();
   }
 
-  // 7. Actuate LEDs & Siren
+  // 7. Update status LEDs (GPIO 2, 4, 5)
   updateStatusLEDs();
 }
