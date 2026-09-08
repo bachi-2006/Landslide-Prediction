@@ -24,7 +24,7 @@ const Sidebar = ({ activeRole, onRoleChange, onAction, emergencyBanner, lang, on
                 {!collapsed && (
                     <div className="flex items-center gap-2">
                         <div className="p-1.5 bg-blue-600 rounded-lg text-white">
-                            <AlertTriangle size={16} />
+                            <Globe size={16} />
                         </div>
                         <div>
                             <h1 className="text-xs font-black tracking-wider text-white">NE-SHIELD</h1>
