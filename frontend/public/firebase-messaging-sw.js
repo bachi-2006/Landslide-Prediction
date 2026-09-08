@@ -24,8 +24,8 @@ if (apiKey && projectId && appId) {
     const title = payload.notification?.title || "NE-SHIELD Landslide Alert";
     const options = {
       body: payload.notification?.body || "Severe hazard status detected in your sector.",
-      icon: "/vite.svg",
-      badge: "/vite.svg",
+      icon: "/favicon.svg",
+      badge: "/favicon.svg",
       data: payload.data || {}
     };
     self.registration.showNotification(title, options);
